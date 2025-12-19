@@ -53,7 +53,7 @@ allpairs <- function(data, respvars, fixed, randomno1, randomno2, timevar, time4
         # V <- c(V, vcov (pair_result$model))
 
         # Calculate Hessian Matrix
-        Hessian_out <- Hessian_pair(pair_result=pair_result,H_=Hessian_out$H_,G_=Hessian_out$G_,V_=Hessian_out$V_,Y_=Hessian_out$Y_,MU_=Hessian_out$MU_,fixedest=Fixedest[[pairno]][,1],pairn=pairno)
+        Hessian_out <- hessian_pair(pair_result=pair_result,H_=Hessian_out$H_,G_=Hessian_out$G_,V_=Hessian_out$V_,Y_=Hessian_out$Y_,MU_=Hessian_out$MU_,fixedest=Fixedest[[pairno]][,1],pairn=pairno)
 
       }
     }
@@ -64,9 +64,9 @@ allpairs <- function(data, respvars, fixed, randomno1, randomno2, timevar, time4
   Y = Hessian_out$Y_
   MU = Hessian_out$MU_
 
-  D_mean = summary_D_matrix(D,respvars)
+  D_mean = summarize_D_matrix(D,respvars)
   R_mean = summarize_R_matrix(R,respvars)
-  fix_est_sum = Summaryfixed(Fixedest,respvars,fixed,H=H,G=G)
+  fix_est_sum = summarize_fixed(Fixedest,respvars,fixed,H=H,G=G)
 
   return(list(R_mean=R_mean,D_mean=D_mean,R=R,D=D,V=V,Y=Y,MU=MU ,Fixedest=Fixedest,Hessian=H,Gradient = G,Fixedest_mean = fix_est_sum, pair_model = pair_model))
 }

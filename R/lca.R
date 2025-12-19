@@ -3,7 +3,7 @@
 lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar, time4mc, id, catvar){
   nrespvars = length(respvars)
   # Get data frame of X, Y, and Z for all pairs
-  data_xyz <- all_xyz(data = data, respvars = respvars, fixed = fixed,
+  data_xyz <- allpairs_xyz(data = data, respvars = respvars, fixed = fixed,
                       randomno1 = randomno1, randomno2 = randomno2,
                       timevar = timevar, time4mc = time4mc, id = id,
                       catvar = catvar)

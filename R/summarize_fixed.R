@@ -35,7 +35,8 @@ summarize_fixed <- function(Fixedest,respvars,fixed,H,G){
     }
   }
 
-  ## Now we can calculate the average and create a matrix for coeffcients and standard deviation
+  ## Now we can calculate the average and create a matrix for
+  ## coeffcients and standard deviation
   A <- matrix(0, nrow = nrespvars*nparameter, ncol =nparameter*npairs*2)
 
   for (i in 1:nrespvars){
