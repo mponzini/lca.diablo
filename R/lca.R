@@ -51,6 +51,9 @@ lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar, time4mc
       new_cluster = clust_new
     )
 
+    # make id variable characters in both data and cluster_new for join to work
+    data$id <- as.character(data$id)
+    cluster_new$id <- as.character(cluster_new$id)
 
     # assign new cluster -> merge data with previous result?
     # contrains cluster assignment and sum(loglik)
