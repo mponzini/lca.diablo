@@ -30,22 +30,22 @@ pair_xyz <- function(data, var1, var2, fixed, rand, timevar, pairno, id,
     if (fixed[i] %in% catvar == FALSE) {
       out_temp <- out_temp %>%
         mutate(
-          !!sym(paste(fixed[i], 1, "_", sep = "")) :=
-            ifelse(outcome_num == 1, !!sym(paste(fixed[i])), 0),
-          !!sym(paste(fixed[i], 2, "_", sep = "")) :=
-            ifelse(outcome_num == 2, !!sym(paste(fixed[i])), 0)
+          !!sym(paste0(fixed[i], 1, "_")) :=
+            ifelse(outcome_num == 1, !!sym(fixed[i]), 0),
+          !!sym(paste0(fixed[i], 2, "_")) :=
+            ifelse(outcome_num == 2, !!sym(fixed[i]), 0)
         )
     } else {
       out_temp <- out_temp %>%
         mutate(
-          !!sym(paste(fixed[i], 1, "_", sep = "")) :=
+          !!sym(paste0(fixed[i], 1, "_")) :=
             relevel(
-              as.factor(ifelse(outcome_num == 1, !!sym(paste(fixed[i])), 0)),
+              as.factor(ifelse(outcome_num == 1, !!sym(fixed[i]), 0)),
               ref = "1"
             ),
-          !!sym(paste(fixed[i], 2, "_", sep = "")) :=
+          !!sym(paste0(fixed[i], 2, "_")) :=
             relevel(
-              as.factor(ifelse(outcome_num == 2, !!sym(paste(fixed[i])), 0)),
+              as.factor(ifelse(outcome_num == 2, !!sym(fixed[i]), 0)),
               ref = "0"
             )
         )

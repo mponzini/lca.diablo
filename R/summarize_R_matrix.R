@@ -16,8 +16,8 @@ summarize_R_matrix <- function(
 
   pair_number <- 0
 
-  for (i in 1:(n - 1)){
-    for (j in (i + 1):n){
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
       pair_number <- pair_number + 1
       R_mean[i, i] <- R_mean[i, i] + R[[pair_number]][1, 1]
       R_mean[i, j] <- R_mean[i, j] + R[[pair_number]][1, 2]
