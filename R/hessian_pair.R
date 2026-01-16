@@ -4,8 +4,8 @@ hessian_pair <- function(pair_result, H_, G_, V_, Y_, MU_, fixedest, pairn) {
   D <- pair_result$D
   R <- pair_result$R
   y <- pair_result$out_temp$Score
-  X <- pair_result$X %>%
-    mutate_all(as.character) %>%
+  X <- pair_result$X |>
+    mutate_all(as.character) |>
     mutate_all(as.numeric)
   Z <- pair_result$Z
   id_list <- table(pair_result$out_temp$id)

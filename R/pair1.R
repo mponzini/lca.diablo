@@ -50,9 +50,9 @@ pair1 <- function(
     if (fixed[i] %in% catvar == FALSE)
       out_temp <- out_temp |>
         dplyr::mutate(
-          !!{{paste0(fixed[i], 1, "_")}} :=
+          !!{{ paste0(fixed[i], 1, "_") }} :=
             ifelse(outcome_num == 1, .data[[fixed[i]]], 0),
-          !!{{paste0(fixed[i], 2, "_")}} :=
+          !!{{ paste0(fixed[i], 2, "_") }} :=
             ifelse(outcome_num == 2, .data[[fixed[i]]], 0)
         )
     else {

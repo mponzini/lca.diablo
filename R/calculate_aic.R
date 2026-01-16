@@ -6,8 +6,8 @@ calculate_aic <- function(test_lca_iterations) {
 
   tb <- test_lca_iterations$Sum.Log.Lik
   # pl likelihood
-  pl <- test_lca_iterations$Sum.Log.Lik %>%
-    apply(1, max, na.rm = TRUE) %>%
+  pl <- test_lca_iterations$Sum.Log.Lik |>
+    apply(1, max, na.rm = TRUE) |>
     sum()
 
   # calculate the trace
