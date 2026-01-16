@@ -1,12 +1,20 @@
 #' @export
 
-lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar, time4mc, id, catvar){
-  nrespvars = length(respvars)
+lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar,
+                time4mc, id, catvar) {
+  nrespvars <- length(respvars)
   # Get data frame of X, Y, and Z for all pairs
-  data_xyz <- allpairs_xyz(data = data, respvars = respvars, fixed = fixed,
-                      randomno1 = randomno1, randomno2 = randomno2,
-                      timevar = timevar, time4mc = time4mc, id = id,
-                      catvar = catvar)
+  data_xyz <- allpairs_xyz(
+    data = data,
+    respvars = respvars,
+    fixed = fixed,
+    randomno1 = randomno1,
+    randomno2 = randomno2,
+    timevar = timevar,
+    time4mc = time4mc,
+    id = id,
+    catvar = catvar
+  )
   # Initial cluster assignment.
   cluster_data <- data.frame(
     id = unique(data$id),
@@ -18,8 +26,8 @@ lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar, time4mc
   # set check = 1 to enter repeat
   check <- 1
 
-  repeat{
-    if(check == 0){
+  repeat {
+    if (check == 0) {
       break
     }
     # split data by cluster, need to repeat as clusters change
@@ -28,17 +36,27 @@ lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar, time4mc
     # Fit all pairwise models for each cluster.
     # <see Yunyi's code>
     k_results <- lapply(data_split, function(x)
-      allpairs(data = x, respvars = respvars, fixed = fixed,
-               randomno1 = randomno1, randomno2 = randomno2, timevar = timevar,
-               time4mc = time4mc, id = id, catvar = catvar))
+      allpairs(
+        data = x,
+        respvars = respvars,
+        fixed = fixed,
+        randomno1 = randomno1,
+        randomno2 = randomno2,
+        timevar = timevar,
+        time4mc = time4mc,
+        id = id,
+        catvar = catvar
+      ))
 
     # wrapper to process results for each cluster?
     likelihood <- lapply(
       k_results,
-      function(x) get_likelihood(respvars_n = nrespvars,
-                                 pairedresult = x,
-                                 fixed = fixed,
-                                 XYZ = data_xyz)
+      function(x) get_likelihood(
+        respvars_n = nrespvars,
+        pairedresult = x,
+        fixed = fixed,
+        XYZ = data_xyz
+      )
     )
 
     # get sum of log likelihoods for each cluster
@@ -57,7 +75,7 @@ lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar, time4mc
 
     # assign new cluster -> merge data with previous result?
     # contrains cluster assignment and sum(loglik)
-    data <- dplyr::left_join(data, cluster_new, by = 'id')
+    data <- dplyr::left_join(data, cluster_new, by = "id")
     # check if at least one obs changed cluster
     check <- sum(abs(data$cluster - data$new_cluster), na.rm = TRUE)
     # update cluster with new_cluster
@@ -81,5 +99,4 @@ lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar, time4mc
     "Sum.Log.Lik" = sum_ll
   )
   return(results)
-
 }
