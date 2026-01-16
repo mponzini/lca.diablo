@@ -10,7 +10,7 @@ pair1 <- function(
     pairno,
     id,
     catvar
-){
+) {
   nop <- length(fixed)
 
   pair_temp <- rawdata |>
@@ -46,33 +46,33 @@ pair1 <- function(
 
   # Handling Fixed Parameters
   fixed_var <- vector()
-  for (i in 1:nop){
+  for (i in 1:nop) {
     if (fixed[i] %in% catvar == FALSE)
       out_temp <- out_temp |>
         dplyr::mutate(
-          !!{{ paste0(fixed[i], 1, "_") }} :=
+          !!{{paste0(fixed[i], 1, "_")}} :=
             ifelse(outcome_num == 1, .data[[fixed[i]]], 0),
-          !!{{ paste0(fixed[i], 2, "_")}} :=
-            ifelse(outcome_num == 2, .data[[fixed[i]]], 0))
-    else{
+          !!{{paste0(fixed[i], 2, "_")}} :=
+            ifelse(outcome_num == 2, .data[[fixed[i]]], 0)
+        )
+    else {
       out_temp <- out_temp |>
         dplyr::mutate(
-          !!dplyr::sym(paste0(fixed[i],1,"_")) :=
+          !!dplyr::sym(paste0(fixed[i], 1, "_")) :=
             relevel(
               as.factor(ifelse(outcome_num == 1, .data[[fixed[i]]], 0)),
               ref = "1"
             ),
-          !!dplyr::sym(paste0(fixed[i],2,"_")) :=
+          !!dplyr::sym(paste0(fixed[i], 2, "_")) :=
             relevel(
               as.factor(ifelse(outcome_num == 2, .data[[fixed[i]]], 0)),
               ref = "0"
             )
         )
-
     }
 
     fixed_var[2 * i - 1] <- paste0(fixed[i], 1, "_")
-    fixed_var[ 2* i] <- paste0(fixed[i], 2, "_")
+    fixed_var[2 * i] <- paste0(fixed[i], 2, "_")
   }
 
   out_temp$visit <- as.factor(out_temp$visit)
@@ -97,22 +97,26 @@ pair1 <- function(
 
   ###     selecting the best model for random part based on AIC
   #####  I am not able to check the convergence status at current stage)  #####
-  # AIC_list = c(AIC(model00),AIC(model10),AIC(model01),AIC(model11))
+  # AIC_list <- c(AIC(model00), AIC(model10), AIC(model01), AIC(model11))
 
-  # if (which(AIC_list == min(AIC_list)) == 1){
-  #   best_model = model00
-  #   Z = out_temp[,c("int1","int2")]
+  # if (which(AIC_list == min(AIC_list)) == 1) {
+  #   best_model <- model00
+  #   Z <- out_temp[, c("int1", "int2")]
   # } else {
-  #   if (which(AIC_list == min(AIC_list)) == 2){
-  #     best_model = model10
-  #     Z = out_temp[, c("int1", "int2", paste(fixed[1], 1, "_", sep=""))]
+  #   if (which(AIC_list == min(AIC_list)) == 2) {
+  #     best_model <- model10
+  #     Z <- out_temp[, c("int1", "int2", paste(fixed[1], 1, "_", sep = ""))]
   #   } else {
-  #     if (which(AIC_list == min(AIC_list)) == 3){
+  #     if (which(AIC_list == min(AIC_list)) == 3) {
   #       best_model <- model01
-  #       Z <- out_temp[, c("int1", "int2", paste(fixed[1], 2, "_", sep=""))]
+  #       Z <- out_temp[, c("int1", "int2", paste(fixed[1], 2, "_", sep = ""))]
   #     } else {
   #       best_model <- model11
-  #       Z <- out_temp[, c("int1","int2",paste(fixed[1],1,"_",sep=""),paste(fixed[1],2,"_",sep=""))]
+  #       Z <- out_temp[, c(
+  #         "int1", "int2",
+  #         paste(fixed[1], 1, "_", sep = ""),
+  #         paste(fixed[1], 2, "_", sep = "")
+  #       )]
   #     }
   #   }
   # }
@@ -130,7 +134,7 @@ pair1 <- function(
 
   # generating R matrix
   R <-
-    data.frame(lme4::VarCorr(best_model)[[1]]) + diag(sigma(best_model) ^ 2, 2)
+    data.frame(lme4::VarCorr(best_model)[[1]]) + diag(sigma(best_model)^2, 2)
 
   ans <- list(
     fixed = fixed,
