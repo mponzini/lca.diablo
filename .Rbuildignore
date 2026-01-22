@@ -1,2 +1,4 @@
+^renv$
+^renv\.lock$
 ^lca\.diablo\.Rproj$
 ^\.Rproj\.user$
