@@ -16,14 +16,14 @@ lca_iterations <- function(data, k, b = 30, respvars, fixed, randomno1,
     iterations,
     function(x) x$Sum.Log.Lik |>
       tibble::rownames_to_column("temp.id") |>
-      mutate(temp.id = as.numeric(temp.id)) |>
-      pivot_longer(
-        cols = contains("V"),
+      dplyr::mutate(temp.id = as.numeric(temp.id)) |>
+      tidyr::pivot_longer(
+        cols = dplyr::contains("V"),
         names_to = "cluster",
         values_to = "loglik"
       ) |>
-      group_by(temp.id) |>
-      slice(which.max(loglik))
+      dplyr::group_by(temp.id) |>
+      dplyr::slice(which.max(loglik))
   )
   # get the pseudo-likelihood for each iteration
   iterations_likelihoods <- data.frame(
@@ -35,7 +35,7 @@ lca_iterations <- function(data, k, b = 30, respvars, fixed, randomno1,
   )
   # get iteration # with highest pseudo-likelihood
   best_iteration <- iterations_likelihoods |>
-    filter(Pseudo.Likelihood == max(Pseudo.Likelihood)) |>
+    dplyr::filter(Pseudo.Likelihood == max(Pseudo.Likelihood)) |>
     dplyr::select(Iteration) |>
     unlist() |>
     unname()

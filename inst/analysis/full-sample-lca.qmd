@@ -1,0 +1,127 @@
+---
+title: "Metformin LCA"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    echo: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+knitr::opts_chunk$set(echo = FALSE)
+pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot,
+               mixOmics)
+devtools::load_all()
+```
+
+```{r}
+#| label: data-prep
+#| include: false
+
+data <- lca.diablo::met_analytic
+
+# replicate previous LCA using full dataset, not just UCD subset with omics
+data_lca_complete <- data |> 
+  dplyr::mutate(
+    visit = dplyr::case_when(
+      redcap_event_name == "Baseline Visit (Visit 1)" ~ 1,
+      redcap_event_name == "Week 8 Visit (Visit 2)" ~ 2,
+      redcap_event_name == "Week 16 (Visit 3/Early Term)" ~ 3
+    ),
+    adams_total = dplyr::if_else(
+      dplyr::if_all(
+        .cols = c(adams_manic, adams_depress, adams_avoid, 
+                  adams_anxious, adams_obsess), 
+        ~ is.na(.x)
+      ),
+      NA,
+      rowSums(
+        dplyr::across(
+          .cols = c(adams_manic, adams_depress, adams_avoid, 
+                    adams_anxious, adams_obsess)
+        ), 
+        na.rm = TRUE
+      )
+    ),
+    pql_total = dplyr::if_else(
+      dplyr::if_all(
+        .cols = c(pql_pf_tot, pql_ef_tot, pql_socf_tot, pql_schf_tot), 
+        ~ is.na(.x)
+      ),
+      NA,
+      rowSums(
+        dplyr::across(
+          .cols = c(pql_pf_tot, pql_ef_tot, pql_socf_tot, pql_schf_tot)
+        ), 
+        na.rm = TRUE
+      )
+    )
+  ) |> 
+  dplyr::select(
+    fxs_sts_id, Treatment, age_group, 
+    visit, abc_comp_rev, adams_total, pql_total
+  ) |> 
+  # update names to match previous data/code
+  dplyr::rename(
+    id = fxs_sts_id,
+    ADAMS_Total = adams_total,
+    PedsQL = pql_total
+  )
+```
+
+
+# LCA 
+
+Fit LCA using the following clinical variables as outcomes: 
+ABC Composite Score, ADAMS total score, and Peds QL total score.  
+
+Fit LCA using k = 1, 2, and 3 and determine the optimal number of clusters 
+based on AIC. Each k was iterated 10 times and the best run, 
+maximum pseudo-likelihood, was selected to reduce the effect of the initial 
+cluster assignment. 
+
+::: {.callout-important}  
+
+Initially tried to fit LCA using 1, 2, 3, and 4 clusters but Age 6-11 
+continuously crashed when k = 4.  
+
+Additionally, when calculating the AIC to compare the number of clusters we 
+encounter the following error:  
+
+```
+Error in diag(H %*% solve(G)) :
+long vectors not supported yet: array.c:2291
+```
+:::
+
+## LCA - All
+
+```{r}
+data_lca <- data_lca_complete
+```
+
+{{< include _sec-lca.qmd >}}
+
+## LCA - Age 6-11
+
+```{r}
+data_lca <- data_lca_complete |> 
+  dplyr::filter(age_group == "Age 6-11")
+```
+
+{{< include _sec-lca.qmd >}}
+
+## LCA - Age 12+
+
+
+```{r}
+data_lca <- data_lca_complete |> 
+  dplyr::filter(age_group == "Age 12+")
+```
+
+{{< include _sec-lca.qmd >}}

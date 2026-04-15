@@ -60,9 +60,15 @@ lca <- function(data, k, respvars, fixed, randomno1, randomno2, timevar,
     )
 
     # get sum of log likelihoods for each cluster
-    sum_ll <- as.data.frame(sapply(1:k, function(x) rowSums(log(likelihood[[x]]))))
+    sum_ll <- as.data.frame(
+      sapply(
+        1:k,
+        function(x) rowSums(log(likelihood[[x]]))
+      )
+    )
     # assign cluster to rowwise max
-    clust_new <- as.numeric(gsub("V", "", colnames(sum_ll)[max.col(sum_ll)]))
+    clust_new <- gsub("V", "", colnames(sum_ll)[max.col(sum_ll)]) |>
+      as.numeric()
 
     cluster_new <- data.frame(
       id = unique(data$id),

@@ -1,0 +1,647 @@
+---
+title: "Metformin DIABLO"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    echo: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+knitr::opts_chunk$set(echo = FALSE)
+pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot,
+               mixOmics)
+devtools::load_all()
+```
+
+```{r}
+#| label: import-results
+#| include: false
+
+## load data ##
+X_diff <- readRDS(
+  file = "../extdata/archive/DIABLO_X_Difference_list.rds"
+)
+# update X_diff names
+names(X_diff) <- c("Metabolites", "Lipids", "Peptides", "Proteomics")
+
+# remove subj 10
+X_diff$Metabolites <- X_diff$Metabolites[-10, ]
+X_diff$Lipids <- X_diff$Lipids[-10, ]
+X_diff$Peptides <- X_diff$Peptides[-10, ]
+X_diff$Proteomics <- X_diff$Proteomics[-10, ]
+
+Y <- readRDS(
+  file = paste0(
+    "../extdata/archive/k2.Assignments.20230714.rds"
+  )
+)
+
+design.mat <- readRDS(
+  file = "../extdata/archive/Metformin.Difference.Diablo.Design.Matrix.rds"
+)
+
+rownames(design.mat) <- colnames(design.mat) <- c(
+  "Metabolites", "Lipids", "Peptides", "Proteomics"
+)
+
+## load lca results ##
+metformin_lca_2 <- readRDS(
+  paste0(
+    "../extdata/archive/Metformin.k2.LCA.NoOutlier.rds"
+  )
+)
+
+## load DIABLO results ##
+k2.diablo.tune.final <- readRDS(
+  paste0(
+    "../extdata/archive/k2.DIABLO.Tuned.20230713.rds"
+  )
+)
+```
+
+# Previous Analysis 
+
+## Clustering
+
+```{r avg-response-by-cluster}
+lca_2_means <- data.frame(
+  "Cluster" = as.factor(c(rep(c(1, 2), each = 3))),
+  "Visit" = rep(c(1, 2, 3), 2),
+  "ABC.Composite" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 3
+  ),
+  "ADAMS.Total" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 3
+  ),
+  "PedsQL" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 3
+  )
+) |>
+  pivot_longer(cols = c(ABC.Composite, ADAMS.Total, PedsQL),
+               names_to = "Measure", values_to = "Score") |>
+  mutate(
+    y_min = 0,
+    y_max = case_when(
+      Measure == "ABC.Composite" ~ 80,
+      Measure == "ADAMS.Total" ~ 40,
+      Measure == "PedsQL" ~ 300
+    )
+  )
+
+# average Std Error
+lca_2_ste <- data.frame(
+  Cluster = c(1, 2),
+  ABC.Composite = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[1]]["visit1_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[2]]["visit1_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[1]]["visit1_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[2]]["visit1_", "Std. Error"])
+    )
+  ),
+  ADAMS.Total = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[1]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[3]]["visit1_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[1]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[3]]["visit1_", "Std. Error"])
+    )
+  ),
+  PedsQL = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[2]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[3]]["visit2_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[2]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[3]]["visit2_", "Std. Error"])
+    )
+  )
+)
+
+# add +/- 1.96*StdError
+test <- lca_2_means |>
+  mutate(
+    seg.min = case_when(
+      Measure == "ABC.Composite" & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "PedsQL"]),
+      Measure == "ABC.Composite" & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "PedsQL"])
+    ),
+    seg.max = case_when(
+      Measure == "ABC.Composite" & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "PedsQL"]),
+      Measure == "ABC.Composite" & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "PedsQL"])
+    )
+  )
+
+# rename variables for figures
+test <- test |>
+  mutate(
+    Measure = case_when(
+      Measure == "ABC.Composite" ~ "ABC Composite Score",
+      Measure == "ADAMS.Total" ~ "ADAMS Total",
+      Measure == "PedsQL" ~ "Pediatric Quality of Life"
+    )
+  )
+
+```
+
+```{r}
+#| label: fig-lca-plot
+
+ggplot(test, aes(x = Visit, y = Score, 
+                 ymin = seg.min, ymax = seg.max,
+                 color = Cluster, group = Cluster)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(width = 0.1) +
+  scale_x_continuous(breaks = c(1, 2, 3)) +
+  facet_wrap(.~Measure, nrow = 1, scales = "free_y") +
+  geom_blank(aes(y = y_min)) +
+  geom_blank(aes(y = y_max)) +
+  theme_bw()
+```
+
+## DIABLO  
+
+### Results for Tuned Model
+
+```{r, include = FALSE}
+# fit diablo without variable selection
+k2.diablo <- block.plsda(
+  X = X_diff, Y = Y, ncomp = 5, design = design.mat
+)
+
+set.seed(9846)
+k2.diablo.perf <- perf(
+  k2.diablo,
+  validation = "loo"
+)
+# k2.diablo.perf$choice.ncomp
+
+k2.ncomp <- 3
+```
+
+```{r}
+# Plot Classification by NComp
+plot(k2.diablo.perf)
+```
+
+Based on the performance plot, the number of components was set to 3.
+
+The number of features to keep per block per component:
+
+<ul>
+  <li>Metabolites:
+    <ul>
+      <li> 20, 10, 10 </li>
+    </ul>
+  </li>
+  <li>Lipids:
+    <ul>
+      <li> 20, 20, 25 </li>
+    </ul>
+  </li>
+  <li>Peptides:
+    <ul>
+      <li> 20, 100, 200 </li>
+    </ul>
+  </li>
+  <li>Proteomics:
+    <ul>
+      <li> 80, 80, 60 </li>
+    </ul>
+  </li>
+</ul>
+  
+
+```{r}
+plotDIABLO(
+  k2.diablo.tune.final,
+  ncomp = 1
+)
+```
+
+```{r}
+plotIndiv(
+  k2.diablo.tune.final, ind.names = FALSE, legend = TRUE,
+  blocks = "average", ellipse = FALSE,
+  legend.title = "",
+  subtitle = "Multi-Omics Average"
+)
+```
+
+
+```{r fig.width=12, fig.height= 8}
+cimDiablo(k2.diablo.tune.final, comp = 1, margin = c(8, 20), 
+          trim = 3,
+          legend.position = "right")
+```
+
+```{r include=FALSE}
+# Consolidate ROC Curves to a single plot
+roc1 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Metabolites",
+  print = FALSE
+)
+
+roc2 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Lipids",
+  print = FALSE
+)
+
+roc3 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Peptides",
+  print = FALSE
+)
+
+roc4 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Proteomics",
+  print = FALSE
+)
+
+roc <- rbind(
+  roc1$graph.Metabolites$comp3$data,
+  roc2$graph.Lipids$comp3$data,
+  roc3$graph.Peptides$comp3$data,
+  roc4$graph.Proteomics$comp3$data
+)
+
+roc$Block <- c(
+  rep("Metabolites", nrow(roc1$graph.Metabolites$comp3$data)),
+  rep("Lipids", nrow(roc2$graph.Lipids$comp3$data)),
+  rep("Peptides", nrow(roc3$graph.Peptides$comp3$data)),
+  rep("Proteomics", nrow(roc4$graph.Proteomics$comp3$data))
+)
+
+roc$Block <- factor(roc$Block, levels = c("Metabolites", "Lipids", "Peptides",
+                                          "Proteomics"))
+```
+
+```{r}
+ggplot(
+  roc,
+  aes(x = Specificity, y = Sensitivity, color = Block, group = Block)
+) +
+  geom_line(aes(linetype = Block), linewidth = 1.2, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0) +
+  # add AUC values for each component
+  annotate("text", label = "AUC: 0.9185", x = 75, y = 30.1, 
+           color = "#F8766D", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.9481", x = 75, y = 25.1, 
+           color = "#7CAE00", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.9407", x = 75, y = 20.1, 
+           color = "#00BFC4", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.8963", x = 75, y = 15.1, 
+           color = "#C77CFF", hjust = 0, vjust = 0) +
+  labs(x = "100 - Specificity (%)", y = "Sensitivity (%)") +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +
+  theme_bw()
+```
+
+```{r auc-avg}
+set.seed(724)
+k2.tune.auc <- perf(
+  k2.diablo.tune.final,
+  auc = TRUE,
+  validation = "loo"
+)
+```
+
+The AUC averaged over all blocks is `r k2.tune.auc$auc$comp3[1]`.
+
+```{r}
+## check performance ##
+# tuned model
+k2.tune.predict <- predict(
+  k2.diablo.tune.final,
+  newdata = X_diff
+)
+
+k2.diablo.tune.confusion <- get.confusion_matrix(
+  truth = Y,
+  predicted =  k2.tune.predict$WeightedVote$centroids.dist[, k2.ncomp]
+)
+
+rownames(k2.diablo.tune.confusion) <- c("Cluster 1", "Cluster 2")
+
+kable(k2.diablo.tune.confusion,
+      col.names = c("Predicted Cluster 1", "Predicted Cluster 2"),
+      row.names = TRUE) |>
+  kable_classic(full_width = FALSE)
+```
+
+The tuned DIABLO model has a balanced error rate of `r paste0(round(get.BER(k2.diablo.tune.confusion)*100, 2), "%")`.
+
+# Compare LCA Cluster Assignment to Treatment Group Assignment
+
+Now that the clinical trial has completed, how do our LCA cluster assignments 
+compare to our Treatment groups?  
+
+```{r}
+compare_clusters <- metformin_lca_2$Data |>
+  dplyr::left_join(
+    x = _,
+    y = unblinding_key |> dplyr::select(fxs_sts_id, unmasked),
+    by = c("id" = "fxs_sts_id")
+  ) |> 
+  dplyr::select(id, cluster, unmasked) |> 
+  dplyr::distinct()
+
+compare_clusters |> 
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = cluster,
+    label = list(
+      unmasked ~ "Treatment Group",
+      cluster ~ "LCA Cluster"
+    )
+  )
+```
+
+
+# Updated DIABLO using Treatment Group instead of LCA Cluster Assignment  
+
+How do the DIABLO results change if we use Treatment Group assignment instead of LCA Cluster assignment?
+
+```{r}
+#| label: diablo-tx-group
+#| include: false
+design_tx <- readRDS(
+  "../extdata/archive/mDIABLO_Design_with_Tx.rds"
+) |> 
+  dplyr::arrange(ID) |> 
+  dplyr::filter(ID != 10) |> 
+  dplyr::mutate(
+    Tx = dplyr::case_when(Treatment.Code == "A" ~ "Metformin",
+                          Treatment.Code == "B" ~ "Placebo")
+  ) |> 
+  dplyr::select(ID, Tx) |> 
+  dplyr::distinct()
+
+Y.met <- as.factor(design_tx$Tx)
+
+k2.diablo.met <- block.plsda(
+  X = X_diff, Y = Y.met, ncomp = 5, design = design.mat
+)
+
+set.seed(5178)
+k2.diablo.met.perf <- perf(
+  k2.diablo.met,
+  validation = "loo"
+)
+
+k2.met.ncomp <- 2
+```
+
+```{r}
+# Plot Classification by NComp
+plot(k2.diablo.met.perf)
+```
+
+```{r}
+#| label: diablo.tuning
+#| include: false
+
+# set.seed(618)
+# test.keepX <- list(
+#   Metabolites = seq(10, 55, 5),
+#   Lipids = seq(20, 65, 5),
+#   Peptides = seq(20, 200, 20),
+#   Proteomics = seq(20, 200, 20)
+# )
+
+# DO NOT need to rerun, just changed the block names #
+# k2.diablo.tune <- tune.block.splsda(
+#   X = X_diff,
+#   Y = Y.met,
+#   ncomp = k2.met.ncomp,
+#   test.keepX = test.keepX,
+#   design = design.mat,
+#   validation = "loo",
+#   BPPARAM = BiocParallel::SnowParam(workers = 4)
+# )
+# 
+# k2.met.keepX <- k2.diablo.tune$choice.keepX
+k2.met.keepX <- readRDS("../extdata/k2.met.keepX.rds")
+
+k2.diablo.met.tune.final <- block.splsda(
+  X = X_diff,
+  Y = Y,
+  ncomp = k2.met.ncomp,
+  keepX = k2.met.keepX,
+  design = design.mat
+)
+```
+
+
+```{r}
+plotDIABLO(
+  k2.diablo.met.tune.final,
+  ncomp = 1
+)
+```
+
+```{r}
+plotIndiv(
+  k2.diablo.met.tune.final, ind.names = FALSE, legend = TRUE,
+  blocks = "average", ellipse = FALSE,
+  legend.title = "",
+  subtitle = "Multi-Omics Average"
+)
+```
+
+```{r fig.width=12, fig.height= 8}
+#| label: fig-met-cim
+#| fig-width: 12
+#| fig-height: 8
+
+cimDiablo(k2.diablo.met.tune.final, comp = 1, margin = c(8, 20), 
+          trim = 3,
+          legend.position = "right")
+```
+
+```{r include=FALSE}
+# Consolidate ROC Curves to a single plot
+roc1.met <- auroc(
+  k2.diablo.met.tune.final,
+  roc.comp = k2.met.ncomp,
+  roc.block = "Metabolites",
+  print = FALSE
+)
+
+roc2.met <- auroc(
+  k2.diablo.met.tune.final,
+  roc.comp = k2.met.ncomp,
+  roc.block = "Lipids",
+  print = FALSE
+)
+
+roc3.met <- auroc(
+  k2.diablo.met.tune.final,
+  roc.comp = k2.met.ncomp,
+  roc.block = "Peptides",
+  print = FALSE
+)
+
+roc4.met <- auroc(
+  k2.diablo.met.tune.final,
+  roc.comp = k2.met.ncomp,
+  roc.block = "Proteomics",
+  print = FALSE
+)
+
+roc.met <- rbind(
+  roc1.met$graph.Metabolites$comp2$data,
+  roc2.met$graph.Lipids$comp2$data,
+  roc3.met$graph.Peptides$comp2$data,
+  roc4.met$graph.Proteomics$comp2$data
+)
+
+roc.met$Block <- c(
+  rep("Metabolites", nrow(roc1.met$graph.Metabolites$comp2$data)),
+  rep("Lipids", nrow(roc2.met$graph.Lipids$comp2$data)),
+  rep("Peptides", nrow(roc3.met$graph.Peptides$comp2$data)),
+  rep("Proteomics", nrow(roc4.met$graph.Proteomics$comp2$data))
+)
+
+roc.met$Block <- factor(roc.met$Block, 
+                        levels = c("Metabolites", "Lipids", 
+                                   "Peptides", "Proteomics")
+                        )
+```
+
+```{r}
+ggplot(
+  roc.met,
+  aes(x = Specificity, y = Sensitivity, color = Block, group = Block)
+) +
+  geom_line(aes(linetype = Block), linewidth = 1.2, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0) +
+  # add AUC values for each component
+  annotate("text", 
+           label = glue::glue("AUC: {roc1.met$Metabolites$comp2[,'AUC']}"), 
+           x = 75, y = 30.1, 
+           color = "#F8766D", hjust = 0, vjust = 0) +
+  annotate("text", 
+           label = glue::glue("AUC: {roc1.met$Lipids$comp2[,'AUC']}"), 
+           x = 75, y = 25.1, 
+           color = "#7CAE00", hjust = 0, vjust = 0) +
+  annotate("text", 
+           label = glue::glue("AUC: {roc1.met$Peptides$comp2[,'AUC']}"), 
+           x = 75, y = 20.1, 
+           color = "#00BFC4", hjust = 0, vjust = 0) +
+  annotate("text", 
+           label = glue::glue("AUC: {roc1.met$Proteomics$comp2[,'AUC']}"), 
+           x = 75, y = 15.1, 
+           color = "#C77CFF", hjust = 0, vjust = 0) +
+  labs(x = "100 - Specificity (%)", y = "Sensitivity (%)") +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +
+  theme_bw()
+```
+
+```{r}
+k2.met.tune.auc <- perf(
+  k2.diablo.met.tune.final,
+  auc = TRUE,
+  validation = "loo"
+)
+```
+
+The AUC averaged over all blocks is `r k2.met.tune.auc$auc$comp2[1]`.
+
+```{r}
+## check performance ##
+# tuned model
+k2.met.tune.predict <- predict(
+  k2.diablo.met.tune.final,
+  newdata = X_diff
+)
+
+k2.diablo.met.tune.confusion.df <- data.frame(
+  truth = Y.met,
+  predicted =  k2.met.tune.predict$WeightedVote$centroids.dist[, k2.met.ncomp]
+) |> 
+  dplyr::mutate(
+    predicted = ifelse(predicted == "Cluster 1", "Metformin", "Placebo")
+  )
+
+k2.diablo.met.tune.confusion.df |> 
+  gtsummary::tbl_cross(
+    row = truth, col = predicted
+  )
+
+Y.met2 <- Y.met |> as.character()
+Y.met2[Y.met2 == "Metformin"] <- "Cluster 1"
+Y.met2[Y.met2 == "Placebo"] <- "Cluster 2"
+Y.met2 <- factor(Y.met2, levels = c("Cluster 1", "Cluster 2"))
+
+k2.diablo.met.tune.confusion <- get.confusion_matrix(
+  truth = Y.met2,
+  predicted =  k2.met.tune.predict$WeightedVote$centroids.dist[, k2.met.ncomp]
+)
+
+rownames(k2.diablo.met.tune.confusion) <- c("Cluster 1", "Cluster 2")
+
+```
+
+The tuned DIABLO model has a balanced error rate of `r paste0(round(get.BER(k2.diablo.met.tune.confusion)*100, 2), "%")`.

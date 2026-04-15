@@ -4,5 +4,8 @@
 .httr-oauth
 .DS_Store
 .quarto
+.Renviron
 
 inst/extdata/*
+inst/analysis/*.html
+data/

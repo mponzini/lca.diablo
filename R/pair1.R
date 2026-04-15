@@ -27,7 +27,7 @@ pair1 <- function(
       )
     ) |>
     dplyr::select(
-      dplyr::all_of(id, timevar, fixed), Resp1, Resp2
+      dplyr::all_of(c(id, timevar, fixed)), Resp1, Resp2
     )
 
   # pivot to long format, handling outcome groups
