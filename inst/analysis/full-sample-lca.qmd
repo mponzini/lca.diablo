@@ -7,6 +7,7 @@ format:
     toc: true
     toc-depth: 2
     echo: false
+    warning: false
 ---
 
 ```{r}
@@ -15,7 +16,7 @@ format:
 
 knitr::opts_chunk$set(echo = FALSE)
 pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot,
-               mixOmics)
+               mixOmics, ggalluvial)
 devtools::load_all()
 ```
 
@@ -63,8 +64,12 @@ data_lca_complete <- data |>
     )
   ) |> 
   dplyr::select(
-    fxs_sts_id, Treatment, age_group, 
-    visit, abc_comp_rev, adams_total, pql_total
+    fxs_sts_id, Treatment, age_group, visit, 
+    # updated list using results from clinical trial
+    abc_comp_rev, 
+    adams_avoid, adams_total, 
+    pql_schf_tot, pql_total,
+    cshq_ts
   ) |> 
   # update names to match previous data/code
   dplyr::rename(
@@ -90,13 +95,6 @@ cluster assignment.
 Initially tried to fit LCA using 1, 2, 3, and 4 clusters but Age 6-11 
 continuously crashed when k = 4.  
 
-Additionally, when calculating the AIC to compare the number of clusters we 
-encounter the following error:  
-
-```
-Error in diag(H %*% solve(G)) :
-long vectors not supported yet: array.c:2291
-```
 :::
 
 ## LCA - All
@@ -117,7 +115,6 @@ data_lca <- data_lca_complete |>
 {{< include _sec-lca.qmd >}}
 
 ## LCA - Age 12+
-
 
 ```{r}
 data_lca <- data_lca_complete |> 

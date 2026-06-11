@@ -2,13 +2,13 @@
 ```{r}
 #| include: false
 
-set.seed(547)
+set.seed(918)
 # 1 cluster
 metformin_lca_1 <- lca_iterations(
   data = data_lca,
   k = 1,
   b = 10,
-  respvars = c("abc_comp_rev", "ADAMS_Total", "PedsQL"),
+  respvars = c("abc_comp_rev", "adams_avoid", "pql_schf_tot"),
   fixed = c("visit"),
   randomno1 = 1,
   randomno2 = c(1, 1, 1),
@@ -22,7 +22,7 @@ metformin_lca_2 <- lca_iterations(
   data = data_lca,
   k = 2,
   b = 10,
-  respvars = c("abc_comp_rev", "ADAMS_Total", "PedsQL"),
+  respvars = c("abc_comp_rev", "adams_avoid", "pql_schf_tot"),
   fixed = c("visit"),
   randomno1 = 1,
   randomno2 = c(1, 1, 1),
@@ -36,7 +36,7 @@ metformin_lca_3 <- lca_iterations(
   data = data_lca,
   k = 3,
   b = 10,
-  respvars = c("abc_comp_rev", "ADAMS_Total", "PedsQL"),
+  respvars = c("abc_comp_rev", "adams_avoid", "pql_schf_tot"),
   fixed = c("visit"),
   randomno1 = 1,
   randomno2 = c(1, 1, 1),
@@ -50,7 +50,7 @@ metformin_lca_3 <- lca_iterations(
 #   data = data_lca,
 #   k = 4,
 #   b = 10,
-#   respvars = c("abc_comp_rev", "ADAMS_Total", "PedsQL"),
+#   respvars = c("abc_comp_rev", "adams_avoid", "pql_schf_tot"),
 #   fixed = c("visit"),
 #   randomno1 = 1,
 #   randomno2 = c(1, 1, 1),
@@ -74,24 +74,24 @@ lca_1_means <- data.frame(
     metformin_lca_1$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
       metformin_lca_1$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 3
   ),
-  "ADAMS.Total" = c(
-    metformin_lca_1$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-    metformin_lca_1$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-    metformin_lca_1$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 3
+  "ADAMS.Avoid" = c(
+    metformin_lca_1$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 1,
+    metformin_lca_1$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 2,
+    metformin_lca_1$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 3
   ),
   "PedsQL" = c(
-    metformin_lca_1$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 1,
-    metformin_lca_1$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 2,
-    metformin_lca_1$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 3
+    metformin_lca_1$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+    metformin_lca_1$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+    metformin_lca_1$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_1$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 3
   )
 ) |>
-  pivot_longer(cols = c(ABC.Composite, ADAMS.Total, PedsQL),
+  pivot_longer(cols = c(ABC.Composite, ADAMS.Avoid, PedsQL),
                names_to = "Measure", values_to = "Score")
 
 # Averages, k = 2
@@ -112,36 +112,36 @@ lca_2_means <- data.frame(
     metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
       metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 3
   ),
-  "ADAMS.Total" = c(
-    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
-    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 3
+  "ADAMS.Avoid" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 3
   ),
   "PedsQL" = c(
-    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 1,
-    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 2,
-    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 3,
-    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 1,
-    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 2,
-    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 3
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 3
   )
 ) |>
-  pivot_longer(cols = c(ABC.Composite, ADAMS.Total, PedsQL),
+  pivot_longer(cols = c(ABC.Composite, ADAMS.Avoid, PedsQL),
                names_to = "Measure", values_to = "Score")
 
 # Averages, k = 3
@@ -168,48 +168,48 @@ lca_3_means <- data.frame(
     metformin_lca_3$Models$`3`$Fixedest_mean["int", "abc_comp_rev"] + 
       metformin_lca_3$Models$`3`$Fixedest_mean["visit", "abc_comp_rev"] * 3
   ),
-  "ADAMS.Total" = c(
-    metformin_lca_3$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-    metformin_lca_3$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-    metformin_lca_3$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
-    metformin_lca_3$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-    metformin_lca_3$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-    metformin_lca_3$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
-    metformin_lca_3$Models$`3`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-    metformin_lca_3$Models$`3`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-    metformin_lca_3$Models$`3`$Fixedest_mean["int", "ADAMS_Total"] + 
-      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "ADAMS_Total"] * 3
+  "ADAMS.Avoid" = c(
+    metformin_lca_3$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 1,
+    metformin_lca_3$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 2,
+    metformin_lca_3$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 3,
+    metformin_lca_3$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 1,
+    metformin_lca_3$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 2,
+    metformin_lca_3$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 3,
+    metformin_lca_3$Models$`3`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "adams_avoid"] * 1,
+    metformin_lca_3$Models$`3`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "adams_avoid"] * 2,
+    metformin_lca_3$Models$`3`$Fixedest_mean["int", "adams_avoid"] + 
+      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "adams_avoid"] * 3
   ),
   "PedsQL" = c(
-    metformin_lca_3$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 1,
-    metformin_lca_3$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 2,
-    metformin_lca_3$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 3,
-    metformin_lca_3$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 1,
-    metformin_lca_3$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 2,
-    metformin_lca_3$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 3,
-    metformin_lca_3$Models$`3`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "PedsQL"] * 1,
-    metformin_lca_3$Models$`3`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "PedsQL"] * 2,
-    metformin_lca_3$Models$`3`$Fixedest_mean["int", "PedsQL"] + 
-      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "PedsQL"] * 3
+    metformin_lca_3$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+    metformin_lca_3$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+    metformin_lca_3$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 3,
+    metformin_lca_3$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+    metformin_lca_3$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+    metformin_lca_3$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 3,
+    metformin_lca_3$Models$`3`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+    metformin_lca_3$Models$`3`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+    metformin_lca_3$Models$`3`$Fixedest_mean["int", "pql_schf_tot"] + 
+      metformin_lca_3$Models$`3`$Fixedest_mean["visit", "pql_schf_tot"] * 3
   )
 ) |>
-  pivot_longer(cols = c(ABC.Composite, ADAMS.Total, PedsQL),
+  pivot_longer(cols = c(ABC.Composite, ADAMS.Avoid, PedsQL),
                names_to = "Measure", values_to = "Score")
 
 # Averages, k = 4
@@ -242,66 +242,116 @@ lca_3_means <- data.frame(
 #     metformin_lca_4$Models$`4`$Fixedest_mean["int", "abc_comp_rev"] + 
 #       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "abc_comp_rev"] * 3
 #   ),
-#   "ADAMS.Total" = c(
-#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
-#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
-#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
-#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
-#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
-#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "ADAMS_Total"] + 
-#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "ADAMS_Total"] * 3
+#   "ADAMS.Avoid" = c(
+#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 1,
+#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 2,
+#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "adams_avoid"] * 3,
+#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 1,
+#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 2,
+#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "adams_avoid"] * 3,
+#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "adams_avoid"] * 1,
+#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "adams_avoid"] * 2,
+#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "adams_avoid"] * 3,
+#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "adams_avoid"] * 1,
+#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "adams_avoid"] * 2,
+#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "adams_avoid"] + 
+#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "adams_avoid"] * 3
 #   ),
 #   "PedsQL" = c(
-#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 1,
-#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 2,
-#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 3,
-#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 1,
-#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 2,
-#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 3,
-#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "PedsQL"] * 1,
-#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "PedsQL"] * 2,
-#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "PedsQL"] * 3,
-#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "PedsQL"] * 1,
-#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "PedsQL"] * 2,
-#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "PedsQL"] + 
-#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "PedsQL"] * 3
+#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+#     metformin_lca_4$Models$`1`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`1`$Fixedest_mean["visit", "pql_schf_tot"] * 3,
+#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+#     metformin_lca_4$Models$`2`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`2`$Fixedest_mean["visit", "pql_schf_tot"] * 3,
+#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+#     metformin_lca_4$Models$`3`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`3`$Fixedest_mean["visit", "pql_schf_tot"] * 3,
+#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "pql_schf_tot"] * 1,
+#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "pql_schf_tot"] * 2,
+#     metformin_lca_4$Models$`4`$Fixedest_mean["int", "pql_schf_tot"] + 
+#       metformin_lca_4$Models$`4`$Fixedest_mean["visit", "pql_schf_tot"] * 3
 #   )
 # ) |>
-#   pivot_longer(cols = c(ABC.Composite, ADAMS.Total, PedsQL),
+#   pivot_longer(cols = c(ABC.Composite, ADAMS.Avoid, PedsQL),
 #                names_to = "Measure", values_to = "Score")
 
 
-# treatment by cluster
+# cluster stability
+compare_clusters <- data.frame(
+  id = data_lca$id |> unique(),
+  Treatment = data_lca |> dplyr::select(id, Treatment) |> dplyr::distinct() |> 
+    dplyr::pull(Treatment)
+) |> 
+  dplyr::left_join(
+    x = _,
+    y = metformin_lca_2$Data |> dplyr::select(id, cluster) |> 
+      dplyr::rename(k2 = cluster) |> 
+      dplyr::distinct(),
+    by = "id"
+  ) |> 
+  dplyr::left_join(
+    x = _,
+    y = metformin_lca_3$Data |> dplyr::select(id, cluster) |> 
+      dplyr::rename(k3 = cluster) |> 
+      dplyr::distinct(),
+    by = "id"
+  ) 
 
+alluvial_df <- compare_clusters |> 
+  dplyr::summarise(
+    N = dplyr::n(),
+    .by = c(k2, k3, Treatment)
+  ) |> 
+  dplyr::mutate(
+    k2 = factor(k2),
+    k3 = factor(k3)
+  )
 ```
+
+```{r}
+aic_1 <- try(BruckerAIC(metformin_lca_1)[1], silent = TRUE)
+aic_2 <- try(BruckerAIC(metformin_lca_2)[1], silent = TRUE)
+aic_3 <- try(BruckerAIC(metformin_lca_3)[1], silent = TRUE)
+
+# replace with NA if class = try-error
+if (class(aic_1) == "try-error") {aic_1 <- NA}
+if (class(aic_2) == "try-error") {aic_2 <- NA}
+if (class(aic_3) == "try-error") {aic_3 <- NA}
+
+lca_aic <- data.frame(
+  "Number.Clusters" = c(seq(1, 3, 1)),
+  "Space" = c(rep("   ", 3)),
+  "AIC" = c(aic_1, aic_2, aic_3)
+)
+
+kable(lca_aic,
+      col.names = c("Number of Clusters", "   ", "AIC")) |>
+  kable_classic(full_width = FALSE)
+```
+
 
 ```{r}
 #| fig-width: 8
@@ -344,3 +394,17 @@ plot_grid(
   nrow = 3
 )
 ```
+<br>
+
+```{r}
+
+alluvial_df |> 
+  ggplot() +
+  aes(y = N, axis1 = k2, axis2 = k3) +
+  scale_x_discrete(limits = c("2 Clusters", "3 Clusters"), expand = c(.2, .05)) +
+  geom_alluvium(aes(fill = Treatment)) +
+  geom_stratum() +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+  theme_minimal()
+```
+
