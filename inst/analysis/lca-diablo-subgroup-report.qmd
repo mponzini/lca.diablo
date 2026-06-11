@@ -516,8 +516,27 @@ ordered_annotations <- snf_annotations |>
   dplyr::mutate(id = as.character(id)) |>
   dplyr::slice(match(ordered_ids, id))
 
-subtype_palette <- c("Subtype 1" = "#1b9e77", "Subtype 2" = "#d95f02")
-treatment_palette <- c("Metformin" = "#7570b3", "Placebo" = "#e7298a")
+subtype_levels <- ordered_annotations$snf_subtype |>
+  droplevels() |>
+  levels()
+subtype_palette <- stats::setNames(
+  scales::hue_pal()(length(subtype_levels)),
+  subtype_levels
+)
+treatment_levels <- ordered_annotations$unmasked |>
+  unique() |>
+  sort()
+treatment_lightness <- 45
+na_color <- "#bdbdbd"
+treatment_palette <- stats::setNames(
+  scales::hue_pal(l = treatment_lightness)(length(treatment_levels)),
+  treatment_levels
+)
+
+row_side_colors <- subtype_palette[as.character(ordered_annotations$snf_subtype)]
+row_side_colors[is.na(row_side_colors)] <- na_color
+col_side_colors <- treatment_palette[ordered_annotations$unmasked]
+col_side_colors[is.na(col_side_colors)] <- na_color
 
 gplots::heatmap.2(
   snf_fit$fused_network[snf_order, snf_order],
@@ -526,8 +545,8 @@ gplots::heatmap.2(
   Rowv = FALSE,
   Colv = FALSE,
   col = grDevices::colorRampPalette(c("white", "#2c7fb8"))(100),
-  RowSideColors = subtype_palette[as.character(ordered_annotations$snf_subtype)],
-  ColSideColors = treatment_palette[ordered_annotations$unmasked],
+  RowSideColors = row_side_colors,
+  ColSideColors = col_side_colors,
   key.title = "Similarity",
   main = "SNF Fused Similarity Network"
 )

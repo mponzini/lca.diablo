@@ -112,7 +112,7 @@ calculate_visit_delta <- function(
     block_matrix,
     MARGIN = 2,
     FUN = function(x) {
-      any(!is.na(x)) && stats::sd(x, na.rm = TRUE) > 0
+      length(stats::na.omit(x)) >= 2 && stats::sd(x, na.rm = TRUE) > 0
     }
   )
   block_matrix <- block_matrix[, keep_cols, drop = FALSE]
@@ -201,12 +201,11 @@ run_snf_subtypes <- function(
 
       if (is.null(rownames(block))) {
         rownames(block) <- sample_ids
+      } else if (!setequal(rownames(block), sample_ids)) {
+        stop("All omics blocks must contain the same sample IDs in row names.", call. = FALSE)
       }
 
       row_order <- match(sample_ids, rownames(block))
-      if (anyNA(row_order)) {
-        stop("All omics blocks must contain the same sample IDs in row names.", call. = FALSE)
-      }
       block <- block[row_order, , drop = FALSE]
 
       block <- .filter_uninformative_features(
