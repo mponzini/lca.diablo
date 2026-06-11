@@ -228,7 +228,7 @@ run_snf_subtypes <- function(
       SNFtool::affinityMatrix(
         SNFtool::dist2(block, block),
         K = K,
-        alpha = alpha
+        sigma = alpha
       )
     }
   )
