@@ -470,6 +470,77 @@ subgroup_data |>
   gtsummary::add_overall()
 ```
 
+## Similarity Network Fusion (SNF) Consensus Subtypes
+
+```{r}
+placebo_ids <- compare_clusters |>
+  dplyr::filter(unmasked == "Placebo") |>
+  dplyr::pull(id) |>
+  as.character()
+
+control_ids <- intersect(rownames(X_diff[[1]]), placebo_ids)
+
+snf_fit <- run_snf_subtypes(
+  omics = X_diff,
+  n_clusters = 2,
+  K = 10,
+  t = 20,
+  control_ids = if (length(control_ids) >= 2) control_ids else NULL
+)
+
+snf_annotations <- annotate_snf_subtypes(
+  subtypes = snf_fit$subtypes,
+  clinical_data = compare_clusters |>
+    dplyr::mutate(id = as.character(id)),
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype = factor(snf_subtype)
+  )
+
+snf_annotations |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype ~ "SNF Subtype"
+    )
+  )
+```
+
+```{r}
+snf_order <- order(snf_fit$subtypes)
+ordered_ids <- rownames(snf_fit$fused_network)[snf_order]
+ordered_annotations <- snf_annotations |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(ordered_ids, id))
+
+subtype_palette <- c("Subtype 1" = "#1b9e77", "Subtype 2" = "#d95f02")
+treatment_palette <- c("Metformin" = "#7570b3", "Placebo" = "#e7298a")
+
+gplots::heatmap.2(
+  snf_fit$fused_network[snf_order, snf_order],
+  trace = "none",
+  dendrogram = "none",
+  Rowv = FALSE,
+  Colv = FALSE,
+  col = grDevices::colorRampPalette(c("white", "#2c7fb8"))(100),
+  RowSideColors = subtype_palette[as.character(ordered_annotations$snf_subtype)],
+  ColSideColors = treatment_palette[ordered_annotations$unmasked],
+  key.title = "Similarity",
+  main = "SNF Fused Similarity Network"
+)
+
+legend(
+  "topright",
+  legend = c(names(subtype_palette), names(treatment_palette)),
+  fill = c(subtype_palette, treatment_palette),
+  cex = 0.8,
+  bty = "n"
+)
+```
+
 ## Heatmaps for Baseline Omics by 'Subgroup'  
 
 ```{r}
