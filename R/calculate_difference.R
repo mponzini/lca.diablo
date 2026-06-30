@@ -17,6 +17,10 @@ calculate_difference <- function(omics_data, patient_data) {
   difference <- function(x) {
     x - data.table::shift(x)
   }
+
+  difference <- function(x) {
+    x - c(NA, head(x, -1))
+  }
   # move rownames (id) to column
   omics <- omics_data |>
     tibble::as_tibble(rownames = NA) |>
@@ -38,22 +42,19 @@ calculate_difference <- function(omics_data, patient_data) {
     ) |>
     dplyr::arrange(fxs_sts_id, visit)
 
-  # drop id variables, convert to data.table and calculate differences
-  all_data_dt <- all_data |>
-    dplyr::select(-id) |>
-    data.table::as.data.table()
+  # calculate difference for each patient using dplyr
+  all_data_diff <- all_data |>
+    dplyr::group_by(fxs_sts_id) |>
+    dplyr::mutate(
+      dplyr::across(
+        .cols = dplyr::where(is.numeric),
+        .fns = difference
+      )
+    ) |>
+    dplyr::ungroup() |>
+    dplyr::relocate(fxs_sts_id, .before = 1) |>
+    dplyr::filter(visit == "Visit3") |>
+    dplyr::select(-c(visit, id))
 
-  data_differences <- all_data_dt[
-    ,
-    lapply(
-      .SD,
-      difference
-    ),
-    fxs_sts_id,
-    .SDcols = colnames(all_data_dt)[-c(ncol(all_data_dt) - 1,
-                                       ncol(all_data_dt))]
-  ] |>
-    dplyr::filter(!is.na(.data[[colnames(all_data_dt)[1]]]))
-
-  return(data_differences)
+  return(all_data_diff)
 }
