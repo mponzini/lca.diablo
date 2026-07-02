@@ -9,3 +9,5 @@ extdata/
 inst/extdata/*
 inst/analysis/*.html
 data/
+.github/*
+docs/*
