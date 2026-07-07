@@ -15,8 +15,7 @@ format:
 
 knitr::opts_knit$set(root.dir = here::here("inst", "analysis"))
 knitr::opts_chunk$set(echo = FALSE)
-pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot,
-               mixOmics, here)
+pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot, mixOmics, here)
 devtools::load_all()
 ```
 
@@ -75,9 +74,9 @@ k2.diablo.tune.final <- readRDS(
 )
 ```
 
-# Previous Analysis 
+# Part 1: Previous LCA & DIABLO Analysis
 
-## Clustering
+## 1.1 LCA Clustering
 
 ```{r avg-response-by-cluster}
 lca_2_means <- data.frame(
@@ -221,9 +220,9 @@ ggplot(test, aes(x = Visit, y = Score,
   theme_bw()
 ```
 
-## DIABLO  
+## 1.2 DIABLO Multi-Omics Integration
 
-### Results for Tuned Model
+### Tuned Model Performance
 
 ```{r, include = FALSE}
 # fit diablo without variable selection
@@ -401,7 +400,7 @@ kable(k2.diablo.tune.confusion,
 
 The tuned DIABLO model has a balanced error rate of `r paste0(round(get.BER(k2.diablo.tune.confusion)*100, 2), "%")`.
 
-# Compare LCA Cluster Assignment to Treatment Group Assignment
+# Part 2: LCA Clusters vs. Treatment Groups
 
 Now that the clinical trial has completed, how do our LCA cluster assignments 
 compare to our Treatment groups?  
@@ -427,7 +426,7 @@ compare_clusters |>
   )
 ```
 
-## Summarize patient characteristics by 'Subgroup'  
+## 2.1 Patient Characteristics by Subgroup
 
 ```{r}
 subgroup_data <- compare_clusters |> 
@@ -466,7 +465,7 @@ subgroup_data |>
   gtsummary::add_overall()
 ```
 
-## Similarity Network Fusion (SNF) Consensus Subtypes
+## 2.2 Similarity Network Fusion (SNF) Consensus Subtypes
 
 ```{r}
 #| include: false
@@ -569,13 +568,25 @@ row_side_colors[is.na(row_side_colors)] <- na_color
 col_side_colors <- treatment_palette[ordered_annotations$unmasked]
 col_side_colors[is.na(col_side_colors)] <- na_color
 
+fused_mat <- snf_fit$fused_network[snf_order, snf_order]
+# Stretch color scale to the actual data range so low similarities
+# are still visually distinguishable (avoids near-white washout).
+fused_vals  <- fused_mat[upper.tri(fused_mat)]
+break_lo    <- quantile(fused_vals, 0.01)
+break_hi    <- quantile(fused_vals, 0.99)
+fused_breaks <- seq(break_lo, break_hi, length.out = 101)
+fused_cols   <- grDevices::colorRampPalette(
+  c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b")  # Blues (5-stop)
+)(100)
+
 gplots::heatmap.2(
-  snf_fit$fused_network[snf_order, snf_order],
+  fused_mat,
   trace = "none",
   dendrogram = "none",
   Rowv = FALSE,
   Colv = FALSE,
-  col = grDevices::colorRampPalette(c("white", "#2c7fb8"))(100),
+  col    = fused_cols,
+  breaks = fused_breaks,
   RowSideColors = row_side_colors,
   ColSideColors = col_side_colors,
   key.title = "Similarity",
@@ -591,7 +602,7 @@ legend(
 )
 ```
 
-## Heatmaps for Baseline Omics by 'Subgroup'  
+## 2.3 Baseline Omics Heatmaps by Subgroup
 
 ```{r}
 #| label: process-omics-list
@@ -688,97 +699,80 @@ proteomics_matrix <- metabs |> dplyr::select(-Subgroup) |> as.matrix()
 ### Lipids  
 
 ```{r}
-group_cols <- scales::hue_pal()(4)
-row_cols <- lipids |> 
-  dplyr::mutate(
-    tmp = dplyr::case_when(
-      Subgroup == "Metformin, 1" ~ group_cols[1],
-      Subgroup == "Metformin, 2" ~ group_cols[2],
-      Subgroup == "Placebo, 1" ~ group_cols[3],
-      Subgroup == "Placebo, 2" ~ group_cols[4]
-    )
-  ) |> 
-  dplyr::pull(tmp)
+# Shared subgroup palette (colorblind-friendly, used for all omics heatmaps)
+subgroup_levels <- c("Metformin, 1", "Metformin, 2", "Placebo, 1", "Placebo, 2")
+subgroup_cols   <- c("#1b7837", "#a6dba0", "#762a83", "#c2a5cf")
+names(subgroup_cols) <- subgroup_levels
+
+# Diverging palette: purple (low) – white (mid) – orange (high)
+# Colorblind-safe and perceptually balanced for Z-scored data
+omics_col_pal <- grDevices::colorRampPalette(
+  c("#7b3294", "#c2a5cf", "white", "#f1a340", "#a6611a")
+)(100)
+
+row_cols <- subgroup_cols[lipids$Subgroup]
 
 gplots::heatmap.2(
   scale(lipids_matrix),
   trace = "none",
-  col = gplots::redgreen(100),
-  RowSideColors = row_cols
+  col = omics_col_pal,
+  RowSideColors = row_cols,
+  key.title = "Z-score"
 )
+legend("topright", legend = subgroup_levels, fill = subgroup_cols,
+       cex = 0.8, bty = "n", title = "Subgroup")
 ```
 
 
 ### Metabolomics
 
 ```{r}
-group_cols <- scales::hue_pal()(4)
-row_cols <- metabs |> 
-  dplyr::mutate(
-    tmp = dplyr::case_when(
-      Subgroup == "Metformin, 1" ~ group_cols[1],
-      Subgroup == "Metformin, 2" ~ group_cols[2],
-      Subgroup == "Placebo, 1" ~ group_cols[3],
-      Subgroup == "Placebo, 2" ~ group_cols[4]
-    )
-  ) |> 
-  dplyr::pull(tmp)
+row_cols <- subgroup_cols[metabs$Subgroup]
 
 gplots::heatmap.2(
   scale(metabs_matrix),
   trace = "none",
-  col = gplots::redgreen(100),
-  RowSideColors = row_cols
+  col = omics_col_pal,
+  RowSideColors = row_cols,
+  key.title = "Z-score"
 )
+legend("topright", legend = subgroup_levels, fill = subgroup_cols,
+       cex = 0.8, bty = "n", title = "Subgroup")
 ```
 
 ### Peptides
 
 ```{r}
-group_cols <- scales::hue_pal()(4)
-row_cols <- proteins |> 
-  dplyr::mutate(
-    tmp = dplyr::case_when(
-      Subgroup == "Metformin, 1" ~ group_cols[1],
-      Subgroup == "Metformin, 2" ~ group_cols[2],
-      Subgroup == "Placebo, 1" ~ group_cols[3],
-      Subgroup == "Placebo, 2" ~ group_cols[4]
-    )
-  ) |> 
-  dplyr::pull(tmp)
+row_cols <- subgroup_cols[proteins$Subgroup]
 
 gplots::heatmap.2(
   scale(proteins_matrix),
   trace = "none",
-  col = gplots::redgreen(100),
-  RowSideColors = row_cols
+  col = omics_col_pal,
+  RowSideColors = row_cols,
+  key.title = "Z-score"
 )
+legend("topright", legend = subgroup_levels, fill = subgroup_cols,
+       cex = 0.8, bty = "n", title = "Subgroup")
 ```
 
 ### Proteomics
 
 ```{r}
-group_cols <- scales::hue_pal()(4)
-row_cols <- proteomics |> 
-  dplyr::mutate(
-    tmp = dplyr::case_when(
-      Subgroup == "Metformin, 1" ~ group_cols[1],
-      Subgroup == "Metformin, 2" ~ group_cols[2],
-      Subgroup == "Placebo, 1" ~ group_cols[3],
-      Subgroup == "Placebo, 2" ~ group_cols[4]
-    )
-  ) |> 
-  dplyr::pull(tmp)
+row_cols <- subgroup_cols[proteomics$Subgroup]
 
 gplots::heatmap.2(
   scale(proteomics_matrix),
   trace = "none",
-  col = gplots::redgreen(100),
-  RowSideColors = row_cols
+  col = omics_col_pal,
+  RowSideColors = row_cols,
+  key.title = "Z-score"
 )
+legend("topright", legend = subgroup_levels, fill = subgroup_cols,
+       cex = 0.8, bty = "n", title = "Subgroup")
 ```
 
-# SAP Step 5: Clinical Outcomes by SNF Subtype
+# Part 3: Clinical Outcomes by SNF Subtype
 
 For each SNF subtype, we summarize the change (V3 − V1) in the three primary
 clinical outcomes and compare by treatment group assignment.
@@ -817,7 +811,7 @@ step5_data <- clinical_delta |>
   )
 ```
 
-## Clinical Outcome Summary by SNF Subtype
+## 3.1 Outcome Summary by SNF Subtype
 
 ```{r}
 step5_data |>
@@ -837,7 +831,7 @@ step5_data |>
   gtsummary::add_overall()
 ```
 
-## Treatment Group × SNF Subtype Clinical Outcomes
+## 3.2 Outcomes by Treatment Group × SNF Subtype
 
 ```{r}
 step5_data |>
