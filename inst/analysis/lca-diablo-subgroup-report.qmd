@@ -470,6 +470,96 @@ subgroup_data |>
   gtsummary::add_overall()
 ```
 
+## Similarity Network Fusion (SNF) Consensus Subtypes
+
+```{r}
+placebo_ids <- compare_clusters |>
+  dplyr::filter(unmasked == "Placebo") |>
+  dplyr::pull(id) |>
+  as.character()
+
+control_ids <- intersect(rownames(X_diff[[1]]), placebo_ids)
+
+snf_fit <- run_snf_subtypes(
+  omics = X_diff,
+  n_clusters = 2,
+  K = 10,
+  t = 20,
+  control_ids = if (length(control_ids) >= 2) control_ids else NULL
+)
+
+snf_annotations <- annotate_snf_subtypes(
+  subtypes = snf_fit$subtypes,
+  clinical_data = compare_clusters |>
+    dplyr::mutate(id = as.character(id)),
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype = factor(snf_subtype)
+  )
+
+snf_annotations |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype ~ "SNF Subtype"
+    )
+  )
+```
+
+```{r}
+snf_order <- order(snf_fit$subtypes)
+ordered_ids <- rownames(snf_fit$fused_network)[snf_order]
+ordered_annotations <- snf_annotations |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(ordered_ids, id))
+
+subtype_levels <- ordered_annotations$snf_subtype |>
+  droplevels() |>
+  levels()
+subtype_palette <- stats::setNames(
+  scales::hue_pal()(length(subtype_levels)),
+  subtype_levels
+)
+treatment_levels <- ordered_annotations$unmasked |>
+  unique() |>
+  sort()
+treatment_lightness <- 45
+na_color <- "#bdbdbd"
+treatment_palette <- stats::setNames(
+  scales::hue_pal(l = treatment_lightness)(length(treatment_levels)),
+  treatment_levels
+)
+
+row_side_colors <- subtype_palette[as.character(ordered_annotations$snf_subtype)]
+row_side_colors[is.na(row_side_colors)] <- na_color
+col_side_colors <- treatment_palette[ordered_annotations$unmasked]
+col_side_colors[is.na(col_side_colors)] <- na_color
+
+gplots::heatmap.2(
+  snf_fit$fused_network[snf_order, snf_order],
+  trace = "none",
+  dendrogram = "none",
+  Rowv = FALSE,
+  Colv = FALSE,
+  col = grDevices::colorRampPalette(c("white", "#2c7fb8"))(100),
+  RowSideColors = row_side_colors,
+  ColSideColors = col_side_colors,
+  key.title = "Similarity",
+  main = "SNF Fused Similarity Network"
+)
+
+legend(
+  "topright",
+  legend = c(names(subtype_palette), names(treatment_palette)),
+  fill = c(subtype_palette, treatment_palette),
+  cex = 0.8,
+  bty = "n"
+)
+```
+
 ## Heatmaps for Baseline Omics by 'Subgroup'  
 
 ```{r}
