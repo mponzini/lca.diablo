@@ -24,23 +24,41 @@ devtools::load_all()
 #| label: import-results
 #| include: false
 
-## load data ##
-X_diff <- readRDS(
-  file = "../../extdata/archive/DIABLO_X_Difference_list.rds"
+## omics + visit design (needed to build X_diff) ##
+omics_list <- readRDS(
+  paste0("../../extdata/archive/DIABLO_X_list.rds")
 )
-# update X_diff names
-names(X_diff) <- c("Metabolites", "Lipids", "Peptides", "Proteomics")
 
-# remove subj 10
-X_diff$Metabolites <- X_diff$Metabolites[-10, ]
-X_diff$Lipids <- X_diff$Lipids[-10, ]
-X_diff$Peptides <- X_diff$Peptides[-10, ]
-X_diff$Proteomics <- X_diff$Proteomics[-10, ]
+patient_design <- readRDS(
+  paste0("../../extdata/archive/DiffExp_Design_20230105.rds")
+)
+
+## load lca results (used to identify the outlier) ##
+metformin_lca_2 <- readRDS(
+  paste0("../../extdata/archive/Metformin.k2.LCA.NoOutlier.rds")
+)
+
+# Build X_diff via calculate_difference() so rows carry fxs_sts_id as names
+X_diff <- list(
+  Metabolites = calculate_difference(omics_list$compounds,  patient_data = patient_design),
+  Lipids      = calculate_difference(omics_list$lipids,     patient_data = patient_design),
+  Peptides    = calculate_difference(omics_list$proteins,   patient_data = patient_design),
+  Proteomics  = calculate_difference(omics_list$proteomics, patient_data = patient_design)
+)
+X_diff <- lapply(X_diff, tibble::column_to_rownames, var = "fxs_sts_id")
+
+# Remove the outlier: the subject absent from the NoOutlier LCA result
+lca_ids    <- as.character(unique(metformin_lca_2$Data$id))
+outlier_id <- setdiff(rownames(X_diff[[1]]), lca_ids)
+if (length(outlier_id) == 1L) {
+  message("Removing outlier: ", outlier_id)
+  X_diff <- lapply(X_diff, function(m) m[rownames(m) != outlier_id, , drop = FALSE])
+} else if (length(outlier_id) != 0L) {
+  stop("Expected exactly one outlier; found: ", paste(outlier_id, collapse = ", "))
+}
 
 Y <- readRDS(
-  file = paste0(
-    "../../extdata/archive/k2.Assignments.20230714.rds"
-  )
+  file = paste0("../../extdata/archive/k2.Assignments.20230714.rds")
 )
 
 design.mat <- readRDS(
@@ -51,32 +69,9 @@ rownames(design.mat) <- colnames(design.mat) <- c(
   "Metabolites", "Lipids", "Peptides", "Proteomics"
 )
 
-## load lca results ##
-metformin_lca_2 <- readRDS(
-  paste0(
-    "../../extdata/archive/Metformin.k2.LCA.NoOutlier.rds"
-  )
-)
-
 ## load DIABLO results ##
 k2.diablo.tune.final <- readRDS(
-  paste0(
-    "../../extdata/archive/k2.DIABLO.Tuned.20230713.rds"
-  )
-)
-
-## omics ##
-omics_list <- readRDS(
-  paste0(
-    "../../extdata/archive/DIABLO_X_list.rds"
-  )
-)
-
-## visit designs ##
-patient_design <- readRDS(
-  paste0(
-    "../../extdata/archive/DiffExp_Design_20230105.rds"
-  )
+  paste0("../../extdata/archive/k2.DIABLO.Tuned.20230713.rds")
 )
 ```
 
@@ -474,6 +469,8 @@ subgroup_data |>
 ## Similarity Network Fusion (SNF) Consensus Subtypes
 
 ```{r}
+#| include: false
+
 placebo_ids <- compare_clusters |>
   dplyr::filter(unmasked == "Placebo") |>
   dplyr::pull(id) |>
@@ -481,14 +478,47 @@ placebo_ids <- compare_clusters |>
 
 control_ids <- intersect(rownames(X_diff[[1]]), placebo_ids)
 
-snf_fit <- run_snf_subtypes(
-  omics = X_diff,
-  n_clusters = 2,
-  K = 10,
-  t = 20,
-  control_ids = if (length(control_ids) >= 2) control_ids else NULL
+# SAP Step 3: align treatment labels to X_diff row order (used for t-test filtering)
+filter_groups <- compare_clusters |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(rownames(X_diff[[1]]), id)) |>
+  dplyr::pull(unmasked)
+
+# SAP Step 2: data reduction — retain top 100 features per block by two-group t-test
+# SAP Step 4: preliminary SNF to obtain fused network for cluster estimation
+snf_prelim <- run_snf_subtypes(
+  omics         = X_diff,
+  n_clusters    = 2,
+  K             = 10,
+  t             = 20,
+  control_ids   = if (length(control_ids) >= 2) control_ids else NULL,
+  filter_groups = filter_groups,
+  top_features  = 100
 )
 
+# SAP Step 4: data-driven cluster number selection (Eigen-gap criterion)
+n_clust_est         <- SNFtool::estimateNumberOfClustersGivenGraph(
+  W = snf_prelim$fused_network, NUMC = 2:8
+)
+n_clusters_selected <- n_clust_est[[1]]
+
+# Final SNF with data-selected number of clusters
+snf_fit <- run_snf_subtypes(
+  omics         = X_diff,
+  n_clusters    = n_clusters_selected,
+  K             = 10,
+  t             = 20,
+  control_ids   = if (length(control_ids) >= 2) control_ids else NULL,
+  filter_groups = filter_groups,
+  top_features  = 100
+)
+```
+
+The Eigen-gap criterion suggests **`r n_clusters_selected`** cluster(s)
+(Rotation cost criterion: `r n_clust_est[[2]]`).
+Top 100 features per omics block were retained based on Metformin vs. Placebo t-test p-values.
+
+```{r}
 snf_annotations <- annotate_snf_subtypes(
   subtypes = snf_fit$subtypes,
   clinical_data = compare_clusters |>
@@ -746,4 +776,85 @@ gplots::heatmap.2(
   col = gplots::redgreen(100),
   RowSideColors = row_cols
 )
+```
+
+# SAP Step 5: Clinical Outcomes by SNF Subtype
+
+For each SNF subtype, we summarize the change (V3 − V1) in the three primary
+clinical outcomes and compare by treatment group assignment.
+
+```{r}
+#| label: step5-data
+#| include: false
+
+# Compute V3 - V1 delta for primary clinical outcomes.
+# Favorable direction: for ABC Composite and ADAMS Total, lower scores = better,
+# so delta is multiplied by -1 so that positive Δ = improvement across all measures.
+# PedsQL: higher = better, no sign flip needed.
+clinical_delta <- calculate_visit_delta(
+  data                = metformin_lca_2$Data,
+  id_col              = "id",
+  visit_col           = "visit",
+  measure_cols        = c("abc_comp_rev", "ADAMS_Total", "PedsQL"),
+  baseline_visit      = 1,
+  followup_visit      = 3,
+  favorable_direction = c(abc_comp_rev = -1, ADAMS_Total = -1, PedsQL = 1)
+)
+
+# Join with SNF subtype and treatment group
+step5_data <- clinical_delta |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::left_join(
+    snf_annotations |>
+      dplyr::mutate(id = as.character(id)) |>
+      dplyr::select(id, snf_subtype, unmasked),
+    by = "id"
+  ) |>
+  dplyr::rename(
+    `ABC Composite (Δ, +↑ = better)`  = abc_comp_rev,
+    `ADAMS Total (Δ, +↑ = better)`    = ADAMS_Total,
+    `PedsQL (Δ, +↑ = better)`         = PedsQL
+  )
+```
+
+## Clinical Outcome Summary by SNF Subtype
+
+```{r}
+step5_data |>
+  gtsummary::tbl_summary(
+    by      = snf_subtype,
+    include = c(`ABC Composite (Δ, +↑ = better)`, `ADAMS Total (Δ, +↑ = better)`, `PedsQL (Δ, +↑ = better)`),
+    type    = everything() ~ "continuous2",
+    statistic = everything() ~ c("{mean} ({sd})",
+                                  "{median} ({p25}, {p75})"),
+    label = list(
+      `ABC Composite (Δ, +↑ = better)`  ~ "ABC Composite Score (V3 − V1, +↑ = improvement)",
+      `ADAMS Total (Δ, +↑ = better)`    ~ "ADAMS Total (V3 − V1, +↑ = improvement)",
+      `PedsQL (Δ, +↑ = better)`         ~ "Pediatric Quality of Life (V3 − V1, +↑ = improvement)"
+    )
+  ) |>
+  gtsummary::add_p() |>
+  gtsummary::add_overall()
+```
+
+## Treatment Group × SNF Subtype Clinical Outcomes
+
+```{r}
+step5_data |>
+  dplyr::mutate(
+    Group = glue::glue("{unmasked} — {snf_subtype}") |> as.character()
+  ) |>
+  gtsummary::tbl_summary(
+    by      = Group,
+    include = c(`ABC Composite (Δ, +↑ = better)`, `ADAMS Total (Δ, +↑ = better)`, `PedsQL (Δ, +↑ = better)`),
+    type    = everything() ~ "continuous2",
+    statistic = everything() ~ c("{mean} ({sd})",
+                                  "{median} ({p25}, {p75})"),
+    label = list(
+      `ABC Composite (Δ, +↑ = better)`  ~ "ABC Composite Score (V3 − V1, +↑ = improvement)",
+      `ADAMS Total (Δ, +↑ = better)`    ~ "ADAMS Total (V3 − V1, +↑ = improvement)",
+      `PedsQL (Δ, +↑ = better)`         ~ "Pediatric Quality of Life (V3 − V1, +↑ = improvement)"
+    )
+  ) |>
+  gtsummary::add_overall()
 ```
