@@ -7,6 +7,7 @@ format:
     toc: true
     toc-depth: 2
     echo: false
+    lightbox: true
 ---
 
 ```{r}
@@ -15,7 +16,7 @@ format:
 
 knitr::opts_knit$set(root.dir = here::here("inst", "analysis"))
 knitr::opts_chunk$set(echo = FALSE)
-pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot, mixOmics, here)
+pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot, mixOmics, here, pheatmap)
 devtools::load_all()
 ```
 
@@ -213,7 +214,8 @@ ggplot(test, aes(x = Visit, y = Score,
   geom_point() +
   geom_line() +
   geom_errorbar(width = 0.1) +
-  scale_x_continuous(breaks = c(1, 2, 3)) +
+  scale_x_continuous(breaks = c(1, 2, 3), labels = c("Visit 1", "Visit 2", "Visit 3")) +
+  labs(x = "Visit", y = "Score", color = "Cluster") +
   facet_wrap(.~Measure, nrow = 1, scales = "free_y") +
   geom_blank(aes(y = y_min)) +
   geom_blank(aes(y = y_max)) +
@@ -540,6 +542,13 @@ snf_annotations |>
 ```
 
 ```{r}
+#| fig-dpi: 150
+#| fig-width: 7
+#| fig-height: 6
+#| lightbox:
+#|   description: "SNF Fused Similarity Network — click to enlarge"
+#|   width: 14
+#|   height: 12
 snf_order <- order(snf_fit$subtypes)
 ordered_ids <- rownames(snf_fit$fused_network)[snf_order]
 ordered_annotations <- snf_annotations |>
@@ -556,49 +565,52 @@ subtype_palette <- stats::setNames(
 treatment_levels <- ordered_annotations$unmasked |>
   unique() |>
   sort()
-treatment_lightness <- 45
-na_color <- "#bdbdbd"
 treatment_palette <- stats::setNames(
-  scales::hue_pal(l = treatment_lightness)(length(treatment_levels)),
+  scales::hue_pal(l = 45)(length(treatment_levels)),
   treatment_levels
 )
 
-row_side_colors <- subtype_palette[as.character(ordered_annotations$snf_subtype)]
-row_side_colors[is.na(row_side_colors)] <- na_color
-col_side_colors <- treatment_palette[ordered_annotations$unmasked]
-col_side_colors[is.na(col_side_colors)] <- na_color
+# Build annotation data frames for pheatmap (rows = subjects, ordered by subtype)
+snf_annot <- data.frame(
+  `SNF Subtype`      = ordered_annotations$snf_subtype,
+  `Treatment Group`  = ordered_annotations$unmasked,
+  row.names          = ordered_annotations$id,
+  check.names        = FALSE
+)
+snf_annot_colors <- list(
+  `SNF Subtype`     = subtype_palette,
+  `Treatment Group` = treatment_palette
+)
 
-fused_mat <- snf_fit$fused_network[snf_order, snf_order]
-# Stretch color scale to the actual data range so low similarities
-# are still visually distinguishable (avoids near-white washout).
-fused_vals  <- fused_mat[upper.tri(fused_mat)]
-break_lo    <- quantile(fused_vals, 0.01)
-break_hi    <- quantile(fused_vals, 0.99)
-fused_breaks <- seq(break_lo, break_hi, length.out = 101)
-fused_cols   <- grDevices::colorRampPalette(
+# Data-driven color breaks (1st–99th percentile) to avoid washout
+fused_mat  <- snf_fit$fused_network[snf_order, snf_order]
+fused_vals <- fused_mat[upper.tri(fused_mat)]
+fused_breaks <- seq(quantile(fused_vals, 0.01),
+                    quantile(fused_vals, 0.99),
+                    length.out = 101)
+fused_cols <- grDevices::colorRampPalette(
   c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b")  # Blues (5-stop)
 )(100)
 
-gplots::heatmap.2(
+pheatmap::pheatmap(
   fused_mat,
-  trace = "none",
-  dendrogram = "none",
-  Rowv = FALSE,
-  Colv = FALSE,
-  col    = fused_cols,
-  breaks = fused_breaks,
-  RowSideColors = row_side_colors,
-  ColSideColors = col_side_colors,
-  key.title = "Similarity",
-  main = "SNF Fused Similarity Network"
-)
-
-legend(
-  "topright",
-  legend = c(names(subtype_palette), names(treatment_palette)),
-  fill = c(subtype_palette, treatment_palette),
-  cex = 0.8,
-  bty = "n"
+  color             = fused_cols,
+  breaks            = fused_breaks,
+  annotation_row    = snf_annot,
+  annotation_col    = snf_annot,
+  annotation_colors = snf_annot_colors,
+  cluster_rows      = FALSE,   # already ordered by subtype
+  cluster_cols      = FALSE,
+  show_rownames     = TRUE,
+  show_colnames     = TRUE,
+  cellwidth         = 10,      # fixed cell size so figure auto-expands
+  cellheight        = 10,
+  fontsize          = 10,      # base font (legend, axis titles)
+  fontsize_row      = 9,
+  fontsize_col      = 9,
+  angle_col         = 90,
+  border_color      = NA,
+  main              = "SNF Fused Similarity Network"
 )
 ```
 
@@ -608,168 +620,113 @@ legend(
 #| label: process-omics-list
 #| include: false
 
-## Visit 1 ##
-# metabolomics
-metabs <- omics_list$compounds |> 
-  tibble::as_tibble(rownames = NA) |> 
-  tibble::rownames_to_column("flora_id") |> 
-  dplyr::left_join(
-    x = _,
-    y = patient_design |> dplyr::select(fxs_sts_id, Visit1),
-    by = c("flora_id" = "Visit1")
-  ) |> 
-  dplyr::filter(!is.na(fxs_sts_id)) |> 
-  dplyr::left_join(
-    x = _,
-    y = subgroup_data |> 
-      dplyr::select(id, Subgroup),
-    by = c("fxs_sts_id" = "id")
-  ) |> 
-  dplyr::filter(!is.na(Subgroup)) |> 
-  tibble::column_to_rownames("fxs_sts_id") |> 
-  dplyr::select(-flora_id)
+# Helper: extract Visit 1 data for one omics block, join subgroup labels
+prepare_omics_v1 <- function(block_mat) {
+  block_mat |>
+    tibble::as_tibble(rownames = NA) |>
+    tibble::rownames_to_column("flora_id") |>
+    dplyr::left_join(
+      patient_design |> dplyr::select(fxs_sts_id, Visit1),
+      by = c("flora_id" = "Visit1")
+    ) |>
+    dplyr::filter(!is.na(fxs_sts_id)) |>
+    dplyr::left_join(
+      subgroup_data |> dplyr::select(id, Subgroup),
+      by = c("fxs_sts_id" = "id")
+    ) |>
+    dplyr::filter(!is.na(Subgroup)) |>
+    tibble::column_to_rownames("fxs_sts_id") |>
+    dplyr::select(-flora_id)
+}
 
-metabs_matrix <- metabs |> dplyr::select(-Subgroup) |> as.matrix()
-# lipids
-lipids <- omics_list$lipids |> 
-  tibble::as_tibble(rownames = NA) |> 
-  tibble::rownames_to_column("flora_id") |> 
-  dplyr::left_join(
-    x = _,
-    y = patient_design |> dplyr::select(fxs_sts_id, Visit1),
-    by = c("flora_id" = "Visit1")
-  ) |> 
-  dplyr::filter(!is.na(fxs_sts_id)) |> 
-  dplyr::left_join(
-    x = _,
-    y = subgroup_data |> 
-      dplyr::select(id, Subgroup),
-    by = c("fxs_sts_id" = "id")
-  ) |> 
-  dplyr::filter(!is.na(Subgroup)) |> 
-  tibble::column_to_rownames("fxs_sts_id") |> 
-  dplyr::select(-flora_id)
+## Visit 1 omics blocks ##
+metabs     <- prepare_omics_v1(omics_list$compounds)
+lipids     <- prepare_omics_v1(omics_list$lipids)
+proteins   <- prepare_omics_v1(omics_list$proteins)
+proteomics <- prepare_omics_v1(omics_list$proteomics)
 
-lipids_matrix <- metabs |> dplyr::select(-Subgroup) |> as.matrix()
-# proteins
-proteins <- omics_list$proteins |> 
-  tibble::as_tibble(rownames = NA) |> 
-  tibble::rownames_to_column("flora_id") |> 
-  dplyr::left_join(
-    x = _,
-    y = patient_design |> dplyr::select(fxs_sts_id, Visit1),
-    by = c("flora_id" = "Visit1")
-  ) |> 
-  dplyr::filter(!is.na(fxs_sts_id)) |> 
-  dplyr::left_join(
-    x = _,
-    y = subgroup_data |> 
-      dplyr::select(id, Subgroup),
-    by = c("fxs_sts_id" = "id")
-  ) |> 
-  dplyr::filter(!is.na(Subgroup)) |> 
-  tibble::column_to_rownames("fxs_sts_id") |> 
-  dplyr::select(-flora_id)
+metabs_matrix     <- metabs     |> dplyr::select(-Subgroup) |> as.matrix()
+lipids_matrix     <- lipids     |> dplyr::select(-Subgroup) |> as.matrix()
+proteins_matrix   <- proteins   |> dplyr::select(-Subgroup) |> as.matrix()
+proteomics_matrix <- proteomics |> dplyr::select(-Subgroup) |> as.matrix()
 
-proteins_matrix <- metabs |> dplyr::select(-Subgroup) |> as.matrix()
-# proteomics
-proteomics <- omics_list$proteomics |> 
-  tibble::as_tibble(rownames = NA) |> 
-  tibble::rownames_to_column("flora_id") |> 
-  dplyr::left_join(
-    x = _,
-    y = patient_design |> dplyr::select(fxs_sts_id, Visit1),
-    by = c("flora_id" = "Visit1")
-  ) |> 
-  dplyr::filter(!is.na(fxs_sts_id)) |> 
-  dplyr::left_join(
-    x = _,
-    y = subgroup_data |> 
-      dplyr::select(id, Subgroup),
-    by = c("fxs_sts_id" = "id")
-  ) |> 
-  dplyr::filter(!is.na(Subgroup)) |> 
-  tibble::column_to_rownames("fxs_sts_id") |> 
-  dplyr::select(-flora_id)
-
-proteomics_matrix <- metabs |> dplyr::select(-Subgroup) |> as.matrix()
-```
-
-
-### Lipids  
-
-```{r}
-# Shared subgroup palette (colorblind-friendly, used for all omics heatmaps)
+# Shared palette & annotation setup (used by all four heatmaps below)
 subgroup_levels <- c("Metformin, 1", "Metformin, 2", "Placebo, 1", "Placebo, 2")
 subgroup_cols   <- c("#1b7837", "#a6dba0", "#762a83", "#c2a5cf")
 names(subgroup_cols) <- subgroup_levels
+annot_colors <- list(Subgroup = subgroup_cols)
 
 # Diverging palette: purple (low) – white (mid) – orange (high)
-# Colorblind-safe and perceptually balanced for Z-scored data
 omics_col_pal <- grDevices::colorRampPalette(
   c("#7b3294", "#c2a5cf", "white", "#f1a340", "#a6611a")
 )(100)
 
-row_cols <- subgroup_cols[lipids$Subgroup]
-
-gplots::heatmap.2(
-  scale(lipids_matrix),
-  trace = "none",
-  col = omics_col_pal,
-  RowSideColors = row_cols,
-  key.title = "Z-score"
-)
-legend("topright", legend = subgroup_levels, fill = subgroup_cols,
-       cex = 0.8, bty = "n", title = "Subgroup")
+# Convenience wrapper: build pheatmap with consistent styling
+omics_heatmap <- function(mat, subgroup_vec, title) {
+  row_annot <- data.frame(
+    Subgroup  = subgroup_vec,
+    row.names = rownames(mat)
+  )
+  pheatmap::pheatmap(
+    scale(mat),
+    color             = omics_col_pal,
+    annotation_row    = row_annot,
+    annotation_colors = annot_colors,
+    cluster_rows      = TRUE,
+    cluster_cols      = TRUE,
+    show_rownames     = TRUE,
+    show_colnames     = FALSE,   # hide column labels — too many features to display
+    fontsize          = 10,
+    fontsize_row      = 9,
+    border_color      = NA,
+    main              = title
+  )
+}
 ```
 
+
+### Lipids
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Lipids heatmap — click to enlarge"
+omics_heatmap(lipids_matrix, lipids$Subgroup, "Lipids — Baseline (Visit 1), Z-scored")
+```
 
 ### Metabolomics
 
 ```{r}
-row_cols <- subgroup_cols[metabs$Subgroup]
-
-gplots::heatmap.2(
-  scale(metabs_matrix),
-  trace = "none",
-  col = omics_col_pal,
-  RowSideColors = row_cols,
-  key.title = "Z-score"
-)
-legend("topright", legend = subgroup_levels, fill = subgroup_cols,
-       cex = 0.8, bty = "n", title = "Subgroup")
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Metabolomics heatmap — click to enlarge"
+omics_heatmap(metabs_matrix, metabs$Subgroup, "Metabolomics — Baseline (Visit 1), Z-scored")
 ```
 
 ### Peptides
 
 ```{r}
-row_cols <- subgroup_cols[proteins$Subgroup]
-
-gplots::heatmap.2(
-  scale(proteins_matrix),
-  trace = "none",
-  col = omics_col_pal,
-  RowSideColors = row_cols,
-  key.title = "Z-score"
-)
-legend("topright", legend = subgroup_levels, fill = subgroup_cols,
-       cex = 0.8, bty = "n", title = "Subgroup")
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Peptides heatmap — click to enlarge"
+omics_heatmap(proteins_matrix, proteins$Subgroup, "Peptides — Baseline (Visit 1), Z-scored")
 ```
 
 ### Proteomics
 
 ```{r}
-row_cols <- subgroup_cols[proteomics$Subgroup]
-
-gplots::heatmap.2(
-  scale(proteomics_matrix),
-  trace = "none",
-  col = omics_col_pal,
-  RowSideColors = row_cols,
-  key.title = "Z-score"
-)
-legend("topright", legend = subgroup_levels, fill = subgroup_cols,
-       cex = 0.8, bty = "n", title = "Subgroup")
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Proteomics heatmap — click to enlarge"
+omics_heatmap(proteomics_matrix, proteomics$Subgroup, "Proteomics — Baseline (Visit 1), Z-scored")
 ```
 
 # Part 3: Clinical Outcomes by SNF Subtype
