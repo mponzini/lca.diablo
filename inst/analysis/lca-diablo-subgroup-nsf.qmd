@@ -1,0 +1,822 @@
+---
+title: "Metformin DIABLO"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    echo: false
+    lightbox: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+knitr::opts_knit$set(root.dir = here::here("inst", "analysis"))
+knitr::opts_chunk$set(echo = FALSE)
+pacman::p_load(kableExtra, dplyr, tidyr, lme4, lmerTest, ggplot2, cowplot, mixOmics, here, pheatmap)
+devtools::load_all()
+```
+
+```{r}
+#| label: import-results
+#| include: false
+
+## omics + visit design (needed to build X_diff) ##
+omics_list <- readRDS(
+  paste0("../../extdata/archive/DIABLO_X_list.rds")
+)
+
+patient_design <- readRDS(
+  paste0("../../extdata/archive/DiffExp_Design_20230105.rds")
+)
+
+## load lca results (used to identify the outlier) ##
+metformin_lca_2 <- readRDS(
+  paste0("../../extdata/archive/Metformin.k2.LCA.NoOutlier.rds")
+)
+
+# Build X_diff via calculate_difference() so rows carry fxs_sts_id as names
+X_diff <- list(
+  Metabolites = calculate_difference(omics_list$compounds,  patient_data = patient_design),
+  Lipids      = calculate_difference(omics_list$lipids,     patient_data = patient_design),
+  Peptides    = calculate_difference(omics_list$proteins,   patient_data = patient_design),
+  Proteomics  = calculate_difference(omics_list$proteomics, patient_data = patient_design)
+)
+X_diff <- lapply(X_diff, tibble::column_to_rownames, var = "fxs_sts_id")
+
+# Remove the outlier: the subject absent from the NoOutlier LCA result
+lca_ids    <- as.character(unique(metformin_lca_2$Data$id))
+outlier_id <- setdiff(rownames(X_diff[[1]]), lca_ids)
+if (length(outlier_id) == 1L) {
+  message("Removing outlier: ", outlier_id)
+  X_diff <- lapply(X_diff, function(m) m[rownames(m) != outlier_id, , drop = FALSE])
+} else if (length(outlier_id) != 0L) {
+  stop("Expected exactly one outlier; found: ", paste(outlier_id, collapse = ", "))
+}
+
+Y <- readRDS(
+  file = paste0("../../extdata/archive/k2.Assignments.20230714.rds")
+)
+
+design.mat <- readRDS(
+  file = "../../extdata/archive/Metformin.Difference.Diablo.Design.Matrix.rds"
+)
+
+rownames(design.mat) <- colnames(design.mat) <- c(
+  "Metabolites", "Lipids", "Peptides", "Proteomics"
+)
+
+## load DIABLO results ##
+k2.diablo.tune.final <- readRDS(
+  paste0("../../extdata/archive/k2.DIABLO.Tuned.20230713.rds")
+)
+
+
+
+
+## Load phenotype data
+
+phenotype.data <- readRDS(
+  paste0("../../extdata/analytic_data.rds")
+)
+
+```
+
+# Part 1: Previous LCA & DIABLO Analysis
+
+## 1.1 LCA Clustering
+
+```{r avg-response-by-cluster}
+lca_2_means <- data.frame(
+  "Cluster" = as.factor(c(rep(c(1, 2), each = 3))),
+  "Visit" = rep(c(1, 2, 3), 2),
+  "ABC.Composite" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 3
+  ),
+  "ADAMS.Total" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 3
+  ),
+  "PedsQL" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 3
+  )
+) |>
+  pivot_longer(cols = c(ABC.Composite, ADAMS.Total, PedsQL),
+               names_to = "Measure", values_to = "Score") |>
+  mutate(
+    y_min = 0,
+    y_max = case_when(
+      Measure == "ABC.Composite" ~ 80,
+      Measure == "ADAMS.Total" ~ 40,
+      Measure == "PedsQL" ~ 300
+    )
+  )
+
+# average Std Error
+lca_2_ste <- data.frame(
+  Cluster = c(1, 2),
+  ABC.Composite = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[1]]["visit1_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[2]]["visit1_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[1]]["visit1_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[2]]["visit1_", "Std. Error"])
+    )
+  ),
+  ADAMS.Total = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[1]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[3]]["visit1_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[1]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[3]]["visit1_", "Std. Error"])
+    )
+  ),
+  PedsQL = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[2]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[3]]["visit2_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[2]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[3]]["visit2_", "Std. Error"])
+    )
+  )
+)
+
+# add +/- 1.96*StdError
+test <- lca_2_means |>
+  mutate(
+    seg.min = case_when(
+      Measure == "ABC.Composite" & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "PedsQL"]),
+      Measure == "ABC.Composite" & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "PedsQL"])
+    ),
+    seg.max = case_when(
+      Measure == "ABC.Composite" & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "PedsQL"]),
+      Measure == "ABC.Composite" & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "PedsQL"])
+    )
+  )
+
+# rename variables for figures
+test <- test |>
+  mutate(
+    Measure = case_when(
+      Measure == "ABC.Composite" ~ "ABC Composite Score",
+      Measure == "ADAMS.Total" ~ "ADAMS Total",
+      Measure == "PedsQL" ~ "Pediatric Quality of Life"
+    )
+  )
+
+```
+
+```{r}
+#| label: fig-lca-plot
+
+ggplot(test, aes(x = Visit, y = Score, 
+                 ymin = seg.min, ymax = seg.max,
+                 color = Cluster, group = Cluster)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(width = 0.1) +
+  scale_x_continuous(breaks = c(1, 2, 3), labels = c("Visit 1", "Visit 2", "Visit 3")) +
+  labs(x = "Visit", y = "Score", color = "Cluster") +
+  facet_wrap(.~Measure, nrow = 1, scales = "free_y") +
+  geom_blank(aes(y = y_min)) +
+  geom_blank(aes(y = y_max)) +
+  theme_bw()
+```
+
+## 1.2 DIABLO Multi-Omics Integration
+
+### Tuned Model Performance
+
+```{r, include = FALSE}
+# fit diablo without variable selection
+k2.diablo <- block.plsda(
+  X = X_diff, Y = Y, ncomp = 5, design = design.mat
+)
+
+set.seed(9846)
+k2.diablo.perf <- perf(
+  k2.diablo,
+  validation = "loo"
+)
+# k2.diablo.perf$choice.ncomp
+
+k2.ncomp <- 3
+```
+
+```{r}
+# Plot Classification by NComp
+plot(k2.diablo.perf)
+```
+
+Based on the performance plot, the number of components was set to 3.
+
+The number of features to keep per block per component:
+
+<ul>
+  <li>Metabolites:
+    <ul>
+      <li> 20, 10, 10 </li>
+    </ul>
+  </li>
+  <li>Lipids:
+    <ul>
+      <li> 20, 20, 25 </li>
+    </ul>
+  </li>
+  <li>Peptides:
+    <ul>
+      <li> 20, 100, 200 </li>
+    </ul>
+  </li>
+  <li>Proteomics:
+    <ul>
+      <li> 80, 80, 60 </li>
+    </ul>
+  </li>
+</ul>
+  
+
+```{r}
+plotDIABLO(
+  k2.diablo.tune.final,
+  ncomp = 1
+)
+```
+
+```{r}
+plotIndiv(
+  k2.diablo.tune.final, ind.names = FALSE, legend = TRUE,
+  blocks = "average", ellipse = FALSE,
+  legend.title = "",
+  subtitle = "Multi-Omics Average"
+)
+```
+
+
+```{r fig.width=12, fig.height= 8}
+cimDiablo(k2.diablo.tune.final, comp = 1, margin = c(8, 20), 
+          trim = 3,
+          legend.position = "right")
+```
+
+```{r include=FALSE}
+# Consolidate ROC Curves to a single plot
+roc1 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Metabolites",
+  print = FALSE
+)
+
+roc2 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Lipids",
+  print = FALSE
+)
+
+roc3 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Peptides",
+  print = FALSE
+)
+
+roc4 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Proteomics",
+  print = FALSE
+)
+
+roc <- rbind(
+  roc1$graph.Metabolites$comp3$data,
+  roc2$graph.Lipids$comp3$data,
+  roc3$graph.Peptides$comp3$data,
+  roc4$graph.Proteomics$comp3$data
+)
+
+roc$Block <- c(
+  rep("Metabolites", nrow(roc1$graph.Metabolites$comp3$data)),
+  rep("Lipids", nrow(roc2$graph.Lipids$comp3$data)),
+  rep("Peptides", nrow(roc3$graph.Peptides$comp3$data)),
+  rep("Proteomics", nrow(roc4$graph.Proteomics$comp3$data))
+)
+
+roc$Block <- factor(roc$Block, levels = c("Metabolites", "Lipids", "Peptides",
+                                          "Proteomics"))
+```
+
+```{r}
+ggplot(
+  roc,
+  aes(x = Specificity, y = Sensitivity, color = Block, group = Block)
+) +
+  geom_line(aes(linetype = Block), linewidth = 1.2, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0) +
+  # add AUC values for each component
+  annotate("text", label = "AUC: 0.9185", x = 75, y = 30.1, 
+           color = "#F8766D", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.9481", x = 75, y = 25.1, 
+           color = "#7CAE00", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.9407", x = 75, y = 20.1, 
+           color = "#00BFC4", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.8963", x = 75, y = 15.1, 
+           color = "#C77CFF", hjust = 0, vjust = 0) +
+  labs(x = "100 - Specificity (%)", y = "Sensitivity (%)") +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +
+  theme_bw()
+```
+
+```{r auc-avg}
+set.seed(724)
+k2.tune.auc <- perf(
+  k2.diablo.tune.final,
+  auc = TRUE,
+  validation = "loo"
+)
+```
+
+The AUC averaged over all blocks is `r k2.tune.auc$auc$comp3[1]`.
+
+```{r}
+## check performance ##
+# tuned model
+k2.tune.predict <- predict(
+  k2.diablo.tune.final,
+  newdata = X_diff
+)
+
+k2.diablo.tune.confusion <- get.confusion_matrix(
+  truth = Y,
+  predicted =  k2.tune.predict$WeightedVote$centroids.dist[, k2.ncomp]
+)
+
+rownames(k2.diablo.tune.confusion) <- c("Cluster 1", "Cluster 2")
+
+kable(k2.diablo.tune.confusion,
+      col.names = c("Predicted Cluster 1", "Predicted Cluster 2"),
+      row.names = TRUE) |>
+  kable_classic(full_width = FALSE)
+```
+
+The tuned DIABLO model has a balanced error rate of `r paste0(round(get.BER(k2.diablo.tune.confusion)*100, 2), "%")`.
+
+# Part 2: LCA Clusters vs. Treatment Groups
+
+Now that the clinical trial has completed, how do our LCA cluster assignments 
+compare to our Treatment groups?  
+
+```{r}
+compare_clusters <- metformin_lca_2$Data |>
+  dplyr::left_join(
+    x = _,
+    y = lca.diablo::unblinding_key |> dplyr::select(fxs_sts_id, unmasked),
+    by = c("id" = "fxs_sts_id")
+  ) |> 
+  dplyr::select(id, cluster, unmasked) |> 
+  dplyr::distinct()
+
+compare_clusters |> 
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = cluster,
+    label = list(
+      unmasked ~ "Treatment Group",
+      cluster ~ "LCA Cluster"
+    )
+  )
+```
+
+## 2.1 Patient Characteristics by Subgroup
+
+```{r}
+subgroup_data <- compare_clusters |> 
+  dplyr::left_join(
+    x = _,
+    y = lca.diablo::redcap_data |> 
+      dplyr::filter(redcap_event_name == "baseline_visit_vis_arm_1"),
+    by = c("id" = "fxs_sts_id")
+  ) |> 
+  dplyr::mutate(
+    Subgroup = glue::glue("{unmasked}, {cluster}") |> 
+      factor(
+        levels = c(
+          "Metformin, 1", "Metformin, 2",
+          "Placebo, 1", "Placebo, 2"
+        )
+      ),
+    Age = demo_age |> as.numeric(),
+    tassone_cat = tassone_cat |> toupper(),
+    `Age Category` = dplyr::case_when(
+      Age < 12 ~ "6-11 yrs",
+      Age >= 12 ~ "12+ yrs"
+    ) |> 
+      factor(levels = c("6-11 yrs", "12+ yrs"))
+  )
+
+subgroup_data |> 
+  gtsummary::tbl_summary(
+    by = Subgroup,
+    type = Age ~ "continuous2",
+    statistic = Age ~ c("{mean} ({sd})", 
+                        "{median} ({p25}, {p75})", 
+                        "{min}, {max}"),
+    include = c(Age, `Age Category`, tassone_cat)
+  ) |> 
+  gtsummary::add_overall()
+```
+
+## 2.2 Similarity Network Fusion (SNF) Consensus Subtypes
+
+```{r}
+#| include: false
+
+placebo_ids <- compare_clusters |>
+  dplyr::filter(unmasked == "Placebo") |>
+  dplyr::pull(id) |>
+  as.character()
+
+control_ids <- intersect(rownames(X_diff[[1]]), placebo_ids)
+
+# SAP Step 3: align treatment labels to X_diff row order (used for t-test filtering)
+filter_groups <- compare_clusters |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(rownames(X_diff[[1]]), id)) |>
+  dplyr::pull(unmasked)
+names(filter_groups) <- rownames(X_diff[[1]])
+
+# SAP Step 2: data reduction — retain top 100 features per block by two-group t-test
+# SAP Step 4: preliminary SNF to obtain fused network for cluster estimation
+snf_prelim <- run_snf_subtypes(
+  omics         = X_diff,
+  n_clusters    = 2,
+  K             = 10,
+  t             = 20,
+  control_ids   = if (length(control_ids) >= 2) control_ids else NULL,
+  filter_groups = filter_groups,
+  top_features  = 100
+)
+
+# SAP Step 4: data-driven cluster number selection (Eigen-gap criterion)
+n_clust_est         <- SNFtool::estimateNumberOfClustersGivenGraph(
+  W = snf_prelim$fused_network, NUMC = 2:8
+)
+n_clusters_selected <- n_clust_est[[1]]
+
+# Final SNF with data-selected number of clusters
+snf_fit <- run_snf_subtypes(
+  omics         = X_diff,
+  n_clusters    = n_clusters_selected,
+  K             = 10,
+  t             = 20,
+  control_ids   = if (length(control_ids) >= 2) control_ids else NULL,
+  filter_groups = filter_groups,
+  top_features  = 100
+)
+```
+
+The Eigen-gap criterion suggests **`r n_clusters_selected`** cluster(s)
+(Rotation cost criterion: `r n_clust_est[[2]]`).
+Top 100 features per omics block were retained based on Metformin vs. Placebo t-test p-values.
+
+```{r}
+snf_annotations <- annotate_snf_subtypes(
+  subtypes = snf_fit$subtypes,
+  clinical_data = compare_clusters |>
+    dplyr::mutate(id = as.character(id)),
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype = factor(snf_subtype)
+  )
+
+snf_annotations |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype ~ "SNF Subtype"
+    )
+  )
+```
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 7
+#| fig-height: 6
+#| lightbox:
+#|   description: "SNF Fused Similarity Network — click to enlarge"
+#|   width: 14
+#|   height: 12
+snf_order <- order(snf_fit$subtypes)
+ordered_ids <- rownames(snf_fit$fused_network)[snf_order]
+ordered_annotations <- snf_annotations |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(ordered_ids, id))
+
+subtype_levels <- ordered_annotations$snf_subtype |>
+  droplevels() |>
+  levels()
+subtype_palette <- stats::setNames(
+  scales::hue_pal()(length(subtype_levels)),
+  subtype_levels
+)
+treatment_levels <- ordered_annotations$unmasked |>
+  unique() |>
+  sort()
+treatment_palette <- stats::setNames(
+  scales::hue_pal(l = 45)(length(treatment_levels)),
+  treatment_levels
+)
+
+# Build annotation data frames for pheatmap (rows = subjects, ordered by subtype)
+snf_annot <- data.frame(
+  `SNF Subtype`      = ordered_annotations$snf_subtype,
+  `Treatment Group`  = ordered_annotations$unmasked,
+  row.names          = ordered_annotations$id,
+  check.names        = FALSE
+)
+snf_annot_colors <- list(
+  `SNF Subtype`     = subtype_palette,
+  `Treatment Group` = treatment_palette
+)
+
+# Data-driven color breaks (1st–99th percentile) to avoid washout
+fused_mat  <- snf_fit$fused_network[snf_order, snf_order]
+fused_vals <- fused_mat[upper.tri(fused_mat)]
+fused_breaks <- seq(quantile(fused_vals, 0.01),
+                    quantile(fused_vals, 0.99),
+                    length.out = 101)
+fused_cols <- grDevices::colorRampPalette(
+  c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b")  # Blues (5-stop)
+)(100)
+
+pheatmap::pheatmap(
+  fused_mat,
+  color             = fused_cols,
+  breaks            = fused_breaks,
+  annotation_row    = snf_annot,
+  annotation_col    = snf_annot,
+  annotation_colors = snf_annot_colors,
+  cluster_rows      = FALSE,   # already ordered by subtype
+  cluster_cols      = FALSE,
+  show_rownames     = TRUE,
+  show_colnames     = TRUE,
+  cellwidth         = 10,      # fixed cell size so figure auto-expands
+  cellheight        = 10,
+  fontsize          = 10,      # base font (legend, axis titles)
+  fontsize_row      = 9,
+  fontsize_col      = 9,
+  angle_col         = 90,
+  border_color      = NA,
+  main              = "SNF Fused Similarity Network"
+)
+```
+
+## 2.3 Baseline Omics Heatmaps by Subgroup
+
+```{r}
+#| label: process-omics-list
+#| include: false
+
+# Helper: extract Visit 1 data for one omics block, join subgroup labels
+prepare_omics_v1 <- function(block_mat) {
+  block_mat |>
+    tibble::as_tibble(rownames = NA) |>
+    tibble::rownames_to_column("flora_id") |>
+    dplyr::left_join(
+      patient_design |> dplyr::select(fxs_sts_id, Visit1),
+      by = c("flora_id" = "Visit1")
+    ) |>
+    dplyr::filter(!is.na(fxs_sts_id)) |>
+    dplyr::left_join(
+      subgroup_data |> dplyr::select(id, Subgroup),
+      by = c("fxs_sts_id" = "id")
+    ) |>
+    dplyr::filter(!is.na(Subgroup)) |>
+    tibble::column_to_rownames("fxs_sts_id") |>
+    dplyr::select(-flora_id)
+}
+
+## Visit 1 omics blocks ##
+metabs     <- prepare_omics_v1(omics_list$compounds)
+lipids     <- prepare_omics_v1(omics_list$lipids)
+proteins   <- prepare_omics_v1(omics_list$proteins)
+proteomics <- prepare_omics_v1(omics_list$proteomics)
+
+metabs_matrix     <- metabs     |> dplyr::select(-Subgroup) |> as.matrix()
+lipids_matrix     <- lipids     |> dplyr::select(-Subgroup) |> as.matrix()
+proteins_matrix   <- proteins   |> dplyr::select(-Subgroup) |> as.matrix()
+proteomics_matrix <- proteomics |> dplyr::select(-Subgroup) |> as.matrix()
+
+# Shared palette & annotation setup (used by all four heatmaps below)
+subgroup_levels <- c("Metformin, 1", "Metformin, 2", "Placebo, 1", "Placebo, 2")
+subgroup_cols   <- c("#1b7837", "#a6dba0", "#762a83", "#c2a5cf")
+names(subgroup_cols) <- subgroup_levels
+annot_colors <- list(Subgroup = subgroup_cols)
+
+# Diverging palette: purple (low) – white (mid) – orange (high)
+omics_col_pal <- grDevices::colorRampPalette(
+  c("#7b3294", "#c2a5cf", "white", "#f1a340", "#a6611a")
+)(100)
+
+# Convenience wrapper: build pheatmap with consistent styling
+omics_heatmap <- function(mat, subgroup_vec, title) {
+  row_annot <- data.frame(
+    Subgroup  = subgroup_vec,
+    row.names = rownames(mat)
+  )
+  pheatmap::pheatmap(
+    scale(mat),
+    color             = omics_col_pal,
+    annotation_row    = row_annot,
+    annotation_colors = annot_colors,
+    cluster_rows      = TRUE,
+    cluster_cols      = TRUE,
+    show_rownames     = TRUE,
+    show_colnames     = FALSE,   # hide column labels — too many features to display
+    fontsize          = 10,
+    fontsize_row      = 9,
+    border_color      = NA,
+    main              = title
+  )
+}
+```
+
+
+### Lipids
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Lipids heatmap — click to enlarge"
+omics_heatmap(lipids_matrix, lipids$Subgroup, "Lipids — Baseline (Visit 1), Z-scored")
+```
+
+### Metabolomics
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Metabolomics heatmap — click to enlarge"
+omics_heatmap(metabs_matrix, metabs$Subgroup, "Metabolomics — Baseline (Visit 1), Z-scored")
+```
+
+### Peptides
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Peptides heatmap — click to enlarge"
+omics_heatmap(proteins_matrix, proteins$Subgroup, "Peptides — Baseline (Visit 1), Z-scored")
+```
+
+### Proteomics
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Proteomics heatmap — click to enlarge"
+omics_heatmap(proteomics_matrix, proteomics$Subgroup, "Proteomics — Baseline (Visit 1), Z-scored")
+```
+
+# Part 3: Clinical Outcomes by SNF Subtype
+
+For each SNF subtype, we summarize the change (V3 − V1) in the three primary
+clinical outcomes and compare by treatment group assignment.
+
+```{r}
+#| label: step5-data
+#| include: false
+
+# Compute V3 - V1 delta for primary clinical outcomes.
+# Favorable direction: for ABC Composite and ADAMS Total, lower scores = better,
+# so delta is multiplied by -1 so that positive Δ = improvement across all measures.
+# PedsQL: higher = better, no sign flip needed.
+clinical_delta <- calculate_visit_delta(
+  data                = metformin_lca_2$Data,
+  id_col              = "id",
+  visit_col           = "visit",
+  measure_cols        = c("abc_comp_rev", "ADAMS_Total", "PedsQL"),
+  baseline_visit      = 1,
+  followup_visit      = 3,
+  favorable_direction = c(abc_comp_rev = -1, ADAMS_Total = -1, PedsQL = 1)
+)
+
+# Join with SNF subtype and treatment group
+step5_data <- clinical_delta |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::left_join(
+    snf_annotations |>
+      dplyr::mutate(id = as.character(id)) |>
+      dplyr::select(id, snf_subtype, unmasked),
+    by = "id"
+  ) |>
+  dplyr::rename(
+    `ABC Composite (Δ, +↑ = better)`  = abc_comp_rev,
+    `ADAMS Total (Δ, +↑ = better)`    = ADAMS_Total,
+    `PedsQL (Δ, +↑ = better)`         = PedsQL
+  )
+```
+
+## 3.1 Outcome Summary by SNF Subtype
+
+```{r}
+step5_data |>
+  gtsummary::tbl_summary(
+    by      = snf_subtype,
+    include = c(`ABC Composite (Δ, +↑ = better)`, `ADAMS Total (Δ, +↑ = better)`, `PedsQL (Δ, +↑ = better)`),
+    type    = everything() ~ "continuous2",
+    statistic = everything() ~ c("{mean} ({sd})",
+                                  "{median} ({p25}, {p75})"),
+    label = list(
+      `ABC Composite (Δ, +↑ = better)`  ~ "ABC Composite Score (V3 − V1, +↑ = improvement)",
+      `ADAMS Total (Δ, +↑ = better)`    ~ "ADAMS Total (V3 − V1, +↑ = improvement)",
+      `PedsQL (Δ, +↑ = better)`         ~ "Pediatric Quality of Life (V3 − V1, +↑ = improvement)"
+    )
+  ) |>
+  gtsummary::add_p() |>
+  gtsummary::add_overall()
+```
+
+## 3.2 Outcomes by Treatment Group × SNF Subtype
+
+```{r}
+step5_data |>
+  dplyr::mutate(
+    Group = glue::glue("{unmasked} — {snf_subtype}") |> as.character()
+  ) |>
+  gtsummary::tbl_summary(
+    by      = Group,
+    include = c(`ABC Composite (Δ, +↑ = better)`, `ADAMS Total (Δ, +↑ = better)`, `PedsQL (Δ, +↑ = better)`),
+    type    = everything() ~ "continuous2",
+    statistic = everything() ~ c("{mean} ({sd})",
+                                  "{median} ({p25}, {p75})"),
+    label = list(
+      `ABC Composite (Δ, +↑ = better)`  ~ "ABC Composite Score (V3 − V1, +↑ = improvement)",
+      `ADAMS Total (Δ, +↑ = better)`    ~ "ADAMS Total (V3 − V1, +↑ = improvement)",
+      `PedsQL (Δ, +↑ = better)`         ~ "Pediatric Quality of Life (V3 − V1, +↑ = improvement)"
+    )
+  ) |>
+  gtsummary::add_overall()
+```
