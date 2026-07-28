@@ -73,6 +73,16 @@ rownames(design.mat) <- colnames(design.mat) <- c(
 k2.diablo.tune.final <- readRDS(
   paste0("../../extdata/archive/k2.DIABLO.Tuned.20230713.rds")
 )
+
+
+
+
+## Load phenotype data
+
+phenotype.data <- readRDS(
+  paste0("../../extdata/analytic_data.rds")
+)
+
 ```
 
 # Part 1: Previous LCA & DIABLO Analysis
@@ -484,6 +494,7 @@ filter_groups <- compare_clusters |>
   dplyr::mutate(id = as.character(id)) |>
   dplyr::slice(match(rownames(X_diff[[1]]), id)) |>
   dplyr::pull(unmasked)
+names(filter_groups) <- rownames(X_diff[[1]])
 
 # SAP Step 2: data reduction — retain top 100 features per block by two-group t-test
 # SAP Step 4: preliminary SNF to obtain fused network for cluster estimation

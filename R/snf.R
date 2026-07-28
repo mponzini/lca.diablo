@@ -190,6 +190,18 @@ run_snf_subtypes <- function(
     }
   }
 
+  if (!is.null(filter_groups)) {
+    if (is.null(names(filter_groups))) {
+      stop("filter_groups must be named with sample IDs.", call. = FALSE)
+    }
+
+    filter_groups <- filter_groups[sample_ids]
+
+    if (anyNA(filter_groups)) {
+      stop("Some samples are missing from filter_groups.", call. = FALSE)
+    }
+  }
+
   processed_omics <- lapply(
     omics,
     FUN = function(block) {
@@ -225,8 +237,9 @@ run_snf_subtypes <- function(
   affinity_matrices <- lapply(
     processed_omics,
     FUN = function(block) {
+      distance_matrix <- sqrt(SNFtool::dist2(block, block))
       SNFtool::affinityMatrix(
-        SNFtool::dist2(block, block),
+        distance_matrix,
         K = K,
         sigma = alpha
       )
