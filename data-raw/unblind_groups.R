@@ -1,10 +1,10 @@
 #### Link groups to unblinded groups ####
 
 blinded_groups <- openxlsx::read.xlsx(
-  xlsxFile = "C:/Users/mponzini/OneDrive - UC Davis Health/KyoungmiProjects/metformin/Data/DSMB_ IDS Blinded Data to date.xlsx"
+  xlsxFile = "./extdata/dsmb_ids_deidentified.xlsx"
 )
 id_key <- openxlsx::read.xlsx(
-  xlsxFile = "./inst/extdata/fxs_study_key.xlsx"
+  xlsxFile = "./extdata/fxs_study_key.xlsx"
 )
 
 blinded_groups <- blinded_groups |>

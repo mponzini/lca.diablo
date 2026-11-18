@@ -1,0 +1,3065 @@
+---
+title: "Metformin DIABLO"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    echo: false
+    lightbox: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+knitr::opts_knit$set(root.dir = here::here("inst", "analysis"))
+knitr::opts_chunk$set(echo = FALSE)
+pacman::p_load(kableExtra, dplyr, tidyr, forcats, lme4, lmerTest, ggplot2, ggalluvial, cowplot, mixOmics, here, pheatmap)
+devtools::load_all()
+```
+
+```{r}
+#| label: import-results
+#| include: false
+
+## omics + visit design (needed to build X_diff) ##
+omics_list <- readRDS(
+  paste0("../../extdata/archive/DIABLO_X_list.rds")
+)
+
+patient_design <- readRDS(
+  paste0("../../extdata/archive/DiffExp_Design_20230105.rds")
+)
+
+## load lca results (used to identify the outlier) ##
+metformin_lca_2 <- readRDS(
+  paste0("../../extdata/archive/Metformin.k2.LCA.NoOutlier.rds")
+)
+
+# Build X_diff via calculate_difference() so rows carry fxs_sts_id as names
+X_diff <- list(
+  Metabolites = calculate_difference(omics_list$compounds,  patient_data = patient_design),
+  Lipids      = calculate_difference(omics_list$lipids,     patient_data = patient_design),
+  Peptides    = calculate_difference(omics_list$proteins,   patient_data = patient_design),
+  Proteomics  = calculate_difference(omics_list$proteomics, patient_data = patient_design)
+)
+X_diff <- lapply(X_diff, tibble::column_to_rownames, var = "fxs_sts_id")
+
+# Remove the outlier: the subject absent from the NoOutlier LCA result
+lca_ids    <- as.character(unique(metformin_lca_2$Data$id))
+outlier_id <- setdiff(rownames(X_diff[[1]]), lca_ids)
+if (length(outlier_id) == 1L) {
+  message("Removing outlier: ", outlier_id)
+  X_diff <- lapply(X_diff, function(m) m[rownames(m) != outlier_id, , drop = FALSE])
+} else if (length(outlier_id) != 0L) {
+  stop("Expected exactly one outlier; found: ", paste(outlier_id, collapse = ", "))
+}
+
+Y <- readRDS(
+  file = paste0("../../extdata/archive/k2.Assignments.20230714.rds")
+)
+
+design.mat <- readRDS(
+  file = "../../extdata/archive/Metformin.Difference.Diablo.Design.Matrix.rds"
+)
+
+rownames(design.mat) <- colnames(design.mat) <- c(
+  "Metabolites", "Lipids", "Peptides", "Proteomics"
+)
+
+## load DIABLO results ##
+k2.diablo.tune.final <- readRDS(
+  paste0("../../extdata/archive/k2.DIABLO.Tuned.20230713.rds")
+)
+
+
+
+
+## Load repeated-measures phenotype data
+phenotype.data <- readRDS(
+  paste0("../../extdata/analytic_data_20260810.rds")
+)
+
+## Calculate all available phenotype differences (Visit 3 minus Visit 1)
+## Note: age_group is non-numeric and does not change between visits, so we
+## preserve it separately and rejoin after calculating differences
+age_group_baseline <- phenotype.data |>
+  dplyr::filter(redcap_event_name == "Baseline Visit (Visit 1)") |>
+  dplyr::select(fxs_sts_id, age_group)
+
+phenotype.data.diff <- phenotype.data |>
+  dplyr::select(-age_group) |>
+  calculate_phenotype_diff(id_col = "fxs_sts_id") |>
+  dplyr::left_join(age_group_baseline, by = "fxs_sts_id")
+
+# Align phenotype block to SNF participants; Treatment retained for summaries only
+snf_ids <- rownames(X_diff[[1]])
+missing_phenotype_ids <- setdiff(
+  snf_ids,
+  as.character(phenotype.data.diff$fxs_sts_id)
+)
+if (length(missing_phenotype_ids) > 0L) {
+  stop(
+    "Phenotype differences are missing for SNF participant(s): ",
+    paste(missing_phenotype_ids, collapse = ", ")
+  )
+}
+
+# Exclude NIH Toolbox Cognition Battery and Facial-emotion processing from SNF
+phenotype_snf_exclude_cols <- c(
+  "tcb_flnkr_analytic", "tcb_dccs_analytic", "tcb_vocb_analytic",
+  "tcb_ptrncomp_analytic", "tcb_lstsrt_analytic",
+  "tcb_picseq_analytic", "tcb_read_analytic",
+  "tcb_spdmtch_analytic", "tcb_crystl_analytic",
+  "tcb_earlycomp_analytic", "tcb_cogcomp_analytic",
+  "tcb_fluid_analytic",
+  "Happy_Eyes_Pct", "Happy_Nose_Pct", "Happy_Mouth_Pct",
+  "Fear_Eyes_Pct", "Fear_Nose_Pct", "Fear_Mouth_Pct",
+  "Calm_Eyes_Pct", "Calm_Nose_Pct", "Calm_Mouth_Pct",
+  "All_Face_Pct_vP"
+)
+
+phenotype_snf_data <- phenotype.data.diff |>
+  dplyr::mutate(fxs_sts_id = as.character(fxs_sts_id)) |>
+  dplyr::select(-dplyr::any_of(phenotype_snf_exclude_cols)) |>
+  na.omit()
+```
+
+# Part 1: Previous LCA & DIABLO Analysis
+
+## 1.1 LCA Clustering
+
+```{r}
+#| label: avg-response-by-cluster
+lca_2_means <- data.frame(
+  "Cluster" = as.factor(c(rep(c(1, 2), each = 3))),
+  "Visit" = rep(c(1, 2, 3), 2),
+  "ABC.Composite" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "abc_comp_rev"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "abc_comp_rev"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "abc_comp_rev"] * 3
+  ),
+  "ADAMS.Total" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "ADAMS_Total"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "ADAMS_Total"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "ADAMS_Total"] * 3
+  ),
+  "PedsQL" = c(
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 1,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 2,
+    metformin_lca_2$Models$`1`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`1`$Fixedest_mean["visit", "PedsQL"] * 3,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 1,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 2,
+    metformin_lca_2$Models$`2`$Fixedest_mean["int", "PedsQL"] + 
+      metformin_lca_2$Models$`2`$Fixedest_mean["visit", "PedsQL"] * 3
+  )
+) |>
+  pivot_longer(cols = c(ABC.Composite, ADAMS.Total, PedsQL),
+               names_to = "Measure", values_to = "Score") |>
+  mutate(
+    y_min = 0,
+    y_max = case_when(
+      Measure == "ABC.Composite" ~ 80,
+      Measure == "ADAMS.Total" ~ 40,
+      Measure == "PedsQL" ~ 300
+    )
+  )
+
+# average Std Error
+lca_2_ste <- data.frame(
+  Cluster = c(1, 2),
+  ABC.Composite = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[1]]["visit1_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[2]]["visit1_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[1]]["visit1_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[2]]["visit1_", "Std. Error"])
+    )
+  ),
+  ADAMS.Total = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[1]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[3]]["visit1_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[1]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[3]]["visit1_", "Std. Error"])
+    )
+  ),
+  PedsQL = c(
+    mean(
+      c(metformin_lca_2$Models$`1`$Fixedest[[2]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`1`$Fixedest[[3]]["visit2_", "Std. Error"])
+    ),
+    mean(
+      c(metformin_lca_2$Models$`2`$Fixedest[[2]]["visit2_", "Std. Error"],
+        metformin_lca_2$Models$`2`$Fixedest[[3]]["visit2_", "Std. Error"])
+    )
+  )
+)
+
+# add +/- 1.96*StdError
+test <- lca_2_means |>
+  mutate(
+    seg.min = case_when(
+      Measure == "ABC.Composite" & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 1 ~ Score - (1.96 * lca_2_ste["1", "PedsQL"]),
+      Measure == "ABC.Composite" & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 2 ~ Score - (1.96 * lca_2_ste["2", "PedsQL"])
+    ),
+    seg.max = case_when(
+      Measure == "ABC.Composite" & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 1 ~ Score + (1.96 * lca_2_ste["1", "PedsQL"]),
+      Measure == "ABC.Composite" & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "ABC.Composite"]),
+      Measure == "ADAMS.Total"  & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "ADAMS.Total"]),
+      Measure == "PedsQL"  & Cluster == 2 ~ Score + (1.96 * lca_2_ste["2", "PedsQL"])
+    )
+  )
+
+# rename variables for figures
+test <- test |>
+  mutate(
+    Measure = case_when(
+      Measure == "ABC.Composite" ~ "ABC Composite Score",
+      Measure == "ADAMS.Total" ~ "ADAMS Total",
+      Measure == "PedsQL" ~ "Pediatric Quality of Life"
+    )
+  )
+
+```
+
+```{r}
+#| label: fig-lca-plot
+
+ggplot(test, aes(x = Visit, y = Score, 
+                 ymin = seg.min, ymax = seg.max,
+                 color = Cluster, group = Cluster)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(width = 0.1) +
+  scale_x_continuous(breaks = c(1, 2, 3), labels = c("Visit 1", "Visit 2", "Visit 3")) +
+  labs(x = "Visit", y = "Score", color = "Cluster") +
+  facet_wrap(.~Measure, nrow = 1, scales = "free_y") +
+  geom_blank(aes(y = y_min)) +
+  geom_blank(aes(y = y_max)) +
+  theme_bw()
+```
+
+## 1.2 DIABLO Multi-Omics Integration
+
+### Tuned Model Performance
+
+```{r, include = FALSE}
+# fit diablo without variable selection
+k2.diablo <- block.plsda(
+  X = X_diff, Y = Y, ncomp = 5, design = design.mat
+)
+
+set.seed(9846)
+k2.diablo.perf <- perf(
+  k2.diablo,
+  validation = "loo"
+)
+# k2.diablo.perf$choice.ncomp
+
+k2.ncomp <- 3
+```
+
+```{r}
+# Plot Classification by NComp
+plot(k2.diablo.perf)
+```
+
+Based on the performance plot, the number of components was set to 3.
+
+The number of features to keep per block per component:
+
+<ul>
+  <li>Metabolites:
+    <ul>
+      <li> 20, 10, 10 </li>
+    </ul>
+  </li>
+  <li>Lipids:
+    <ul>
+      <li> 20, 20, 25 </li>
+    </ul>
+  </li>
+  <li>Peptides:
+    <ul>
+      <li> 20, 100, 200 </li>
+    </ul>
+  </li>
+  <li>Proteomics:
+    <ul>
+      <li> 80, 80, 60 </li>
+    </ul>
+  </li>
+</ul>
+  
+
+```{r}
+plotDIABLO(
+  k2.diablo.tune.final,
+  ncomp = 1
+)
+```
+
+```{r}
+plotIndiv(
+  k2.diablo.tune.final, ind.names = FALSE, legend = TRUE,
+  blocks = "average", ellipse = FALSE,
+  legend.title = "",
+  subtitle = "Multi-Omics Average"
+)
+```
+
+
+```{r fig.width=12, fig.height= 8}
+cimDiablo(k2.diablo.tune.final, comp = 1, margin = c(8, 20), 
+          trim = 3,
+          legend.position = "right")
+```
+
+```{r include=FALSE}
+# Consolidate ROC Curves to a single plot
+roc1 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Metabolites",
+  print = FALSE
+)
+
+roc2 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Lipids",
+  print = FALSE
+)
+
+roc3 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Peptides",
+  print = FALSE
+)
+
+roc4 <- auroc(
+  k2.diablo.tune.final,
+  roc.comp = k2.ncomp,
+  roc.block = "Proteomics",
+  print = FALSE
+)
+
+roc <- rbind(
+  roc1$graph.Metabolites$comp3$data,
+  roc2$graph.Lipids$comp3$data,
+  roc3$graph.Peptides$comp3$data,
+  roc4$graph.Proteomics$comp3$data
+)
+
+roc$Block <- c(
+  rep("Metabolites", nrow(roc1$graph.Metabolites$comp3$data)),
+  rep("Lipids", nrow(roc2$graph.Lipids$comp3$data)),
+  rep("Peptides", nrow(roc3$graph.Peptides$comp3$data)),
+  rep("Proteomics", nrow(roc4$graph.Proteomics$comp3$data))
+)
+
+roc$Block <- factor(roc$Block, levels = c("Metabolites", "Lipids", "Peptides",
+                                          "Proteomics"))
+```
+
+```{r}
+ggplot(
+  roc,
+  aes(x = Specificity, y = Sensitivity, color = Block, group = Block)
+) +
+  geom_line(aes(linetype = Block), linewidth = 1.2, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0) +
+  # add AUC values for each component
+  annotate("text", label = "AUC: 0.9185", x = 75, y = 30.1, 
+           color = "#F8766D", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.9481", x = 75, y = 25.1, 
+           color = "#7CAE00", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.9407", x = 75, y = 20.1, 
+           color = "#00BFC4", hjust = 0, vjust = 0) +
+  annotate("text", label = "AUC: 0.8963", x = 75, y = 15.1, 
+           color = "#C77CFF", hjust = 0, vjust = 0) +
+  labs(x = "100 - Specificity (%)", y = "Sensitivity (%)") +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +
+  theme_bw()
+```
+
+```{r auc-avg}
+set.seed(724)
+k2.tune.auc <- perf(
+  k2.diablo.tune.final,
+  auc = TRUE,
+  validation = "loo"
+)
+```
+
+The AUC averaged over all blocks is `r k2.tune.auc$auc$comp3[1]`.
+
+```{r}
+## check performance ##
+# tuned model
+k2.tune.predict <- predict(
+  k2.diablo.tune.final,
+  newdata = X_diff
+)
+
+k2.diablo.tune.confusion <- get.confusion_matrix(
+  truth = Y,
+  predicted =  k2.tune.predict$WeightedVote$centroids.dist[, k2.ncomp]
+)
+
+rownames(k2.diablo.tune.confusion) <- c("Cluster 1", "Cluster 2")
+
+kable(k2.diablo.tune.confusion,
+      col.names = c("Predicted Cluster 1", "Predicted Cluster 2"),
+      row.names = TRUE) |>
+  kable_classic(full_width = FALSE)
+```
+
+The tuned DIABLO model has a balanced error rate of `r paste0(round(get.BER(k2.diablo.tune.confusion)*100, 2), "%")`.
+
+# Part 2: LCA Clusters vs. Treatment Groups
+
+Now that the clinical trial has completed, how do our LCA cluster assignments 
+compare to our Treatment groups?  
+
+```{r}
+compare_clusters <- metformin_lca_2$Data |>
+  dplyr::left_join(
+    x = _,
+    y = lca.diablo::unblinding_key |> dplyr::select(fxs_sts_id, unmasked),
+    by = c("id" = "fxs_sts_id")
+  ) |> 
+  dplyr::select(id, cluster, unmasked) |> 
+  dplyr::distinct()
+
+compare_clusters |> 
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = cluster,
+    label = list(
+      unmasked ~ "Treatment Group",
+      cluster ~ "LCA Cluster"
+    )
+  )
+```
+
+## 2.1 Patient Characteristics by Subgroup
+
+```{r}
+subgroup_data <- compare_clusters |> 
+  dplyr::left_join(
+    x = _,
+    y = lca.diablo::redcap_data |> 
+      dplyr::filter(redcap_event_name == "baseline_visit_vis_arm_1"),
+    by = c("id" = "fxs_sts_id")
+  ) |> 
+  dplyr::mutate(
+    Subgroup = glue::glue("{unmasked}, {cluster}") |> 
+      factor(
+        levels = c(
+          "Metformin, 1", "Metformin, 2",
+          "Placebo, 1", "Placebo, 2"
+        )
+      ),
+    Age = demo_age |> as.numeric(),
+    tassone_cat = tassone_cat |> toupper(),
+    `Age Category` = dplyr::case_when(
+      Age < 12 ~ "6-11 yrs",
+      Age >= 12 ~ "12+ yrs"
+    ) |> 
+      factor(levels = c("6-11 yrs", "12+ yrs"))
+  )
+
+subgroup_data |> 
+  gtsummary::tbl_summary(
+    by = Subgroup,
+    type = Age ~ "continuous2",
+    statistic = Age ~ c("{mean} ({sd})", 
+                        "{median} ({p25}, {p75})", 
+                        "{min}, {max}"),
+    include = c(Age, `Age Category`, tassone_cat)
+  ) |> 
+  gtsummary::add_overall()
+```
+
+# Part 3: Similarity Network Fusion (SNF) Consensus Subtypes
+
+### Methodology
+
+SNF (Wang et al. 2014, *Nature Methods* 11, 333–337) finds subtypes from four
+V3 minus V1 omics change-score blocks: metabolites, lipids, peptides, and
+proteomics. Clustering itself never sees treatment group, but preprocessing
+uses the Placebo group as a reference for standardization:
+
+- **Feature selection** — keep the top 100 most variable features per block
+  (MAD, median absolute deviation).
+- **Normalization** — Z-score each block using Placebo subjects as the
+  reference (center and scale computed from Placebo group, applied to all
+  subjects).
+
+**Why:** using Placebo as the reference provides a stable baseline for
+comparing Metformin-treated subjects against a control standard, ensuring
+that any SNF-subtype × Treatment-group associations reflect genuine biological
+differences rather than arbitrary scaling choices.
+
+**Steps:** feature selection (MAD) → normalization (Z-score with Placebo
+reference) → per-block affinity (`SNFtool::affinityMatrix`) → network fusion
+(`SNFtool::SNF`) → cluster-number selection (Eigen-gap,
+`estimateNumberOfClustersGivenGraph`) → final clustering
+(`SNFtool::spectralClustering`).
+
+### SNF Subtyping by Multi-Omic
+
+```{r}
+#| include: false
+
+# Extract Placebo IDs to use as reference for Z-score normalization
+placebo_ids <- compare_clusters |>
+  dplyr::filter(unmasked == "Placebo") |>
+  dplyr::pull(id) |>
+  as.character()
+
+control_ids <- intersect(rownames(X_diff[[1]]), placebo_ids)
+
+# SAP Step 2: unsupervised data reduction — retain the top 100 features per
+# block by dispersion (MAD), with NO reference to treatment group.
+# SAP Step 3: normalize each block using Placebo subjects as the reference
+# (center and scale computed from Placebo group, applied to all subjects).
+# SAP Step 4: preliminary SNF to obtain fused network for cluster estimation
+snf_prelim <- run_snf_subtypes(
+  omics                    = X_diff,
+  n_clusters               = 2,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad",
+  control_ids              = if (length(control_ids) >= 2) control_ids else NULL
+)
+
+# SAP Step 4: data-driven cluster number selection (Eigen-gap criterion)
+n_clust_est         <- SNFtool::estimateNumberOfClustersGivenGraph(
+  W = snf_prelim$fused_network, NUMC = 2:8
+)
+n_clusters_selected <- n_clust_est[[1]]
+
+# Final SNF with data-selected number of clusters
+snf_fit <- run_snf_subtypes(
+  omics                    = X_diff,
+  n_clusters               = n_clusters_selected,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad",
+  control_ids              = if (length(control_ids) >= 2) control_ids else NULL
+)
+```
+
+The Eigen-gap criterion suggests **`r n_clusters_selected`** cluster(s)
+(Rotation cost criterion: `r n_clust_est[[2]]`).
+Top 100 features per block were retained by dispersion (median absolute
+deviation), independent of treatment group.
+Each block was Z-scored using Placebo subjects as the reference, with
+center and scale parameters computed from the Placebo group and applied to
+all subjects.
+
+```{r}
+snf_annotations <- annotate_snf_subtypes(
+  subtypes = snf_fit$subtypes,
+  clinical_data = compare_clusters |>
+    dplyr::mutate(id = as.character(id)),
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype = factor(snf_subtype)
+  )
+
+snf_annotations |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype ~ "SNF Subtype"
+    )
+  )
+```
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 7
+#| fig-height: 6
+#| lightbox:
+#|   description: "SNF Fused Similarity Network — click to enlarge"
+#|   width: 14
+#|   height: 12
+snf_order <- order(snf_fit$subtypes)
+ordered_ids <- rownames(snf_fit$fused_network)[snf_order]
+ordered_annotations <- snf_annotations |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(ordered_ids, id))
+
+subtype_levels <- ordered_annotations$snf_subtype |>
+  droplevels() |>
+  levels()
+subtype_palette <- stats::setNames(
+  scales::hue_pal()(length(subtype_levels)),
+  subtype_levels
+)
+treatment_levels <- c("Metformin", "Placebo")
+treatment_palette <- stats::setNames(
+  scales::hue_pal(l = 45)(length(treatment_levels)),
+  treatment_levels
+)
+
+# Build annotation data frames for pheatmap (rows = subjects, ordered by subtype)
+snf_annot <- data.frame(
+  `SNF Subtype`      = ordered_annotations$snf_subtype,
+  `Treatment Group`  = ordered_annotations$unmasked,
+  row.names          = ordered_annotations$id,
+  check.names        = FALSE
+)
+snf_annot_colors <- list(
+  `SNF Subtype`     = subtype_palette,
+  `Treatment Group` = treatment_palette
+)
+
+# Data-driven color breaks (1st–99th percentile) to avoid washout
+fused_mat  <- snf_fit$fused_network[snf_order, snf_order]
+fused_vals <- fused_mat[upper.tri(fused_mat)]
+fused_breaks <- seq(quantile(fused_vals, 0.01),
+                    quantile(fused_vals, 0.99),
+                    length.out = 101)
+fused_cols <- grDevices::colorRampPalette(
+  c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b")  # Blues (5-stop)
+)(100)
+
+pheatmap::pheatmap(
+  fused_mat,
+  color             = fused_cols,
+  breaks            = fused_breaks,
+  annotation_row    = snf_annot,
+  annotation_col    = snf_annot,
+  annotation_colors = snf_annot_colors,
+  cluster_rows      = FALSE,   # already ordered by subtype
+  cluster_cols      = FALSE,
+  show_rownames     = TRUE,
+  show_colnames     = TRUE,
+  cellwidth         = 10,      # fixed cell size so figure auto-expands
+  cellheight        = 10,
+  fontsize          = 10,      # base font (legend, axis titles)
+  fontsize_row      = 9,
+  fontsize_col      = 9,
+  angle_col         = 90,
+  border_color      = NA,
+  main              = "SNF Fused Similarity Network"
+)
+```
+
+#### Multi-Omic Similarity Network
+
+The network displays the strongest 5% of participant-to-participant
+similarities from the fused multi-omic network. Node color identifies the
+multi-omic subtype, node shape identifies treatment group, and edge opacity
+represents similarity strength.
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 10
+#| fig-height: 8
+#| lightbox:
+#|   description: "Multi-omic similarity network — click to enlarge"
+
+multiomic_affinity <- snf_fit$fused_network
+multiomic_edge_values <- multiomic_affinity[upper.tri(multiomic_affinity)]
+multiomic_edge_threshold <- stats::quantile(
+  multiomic_edge_values,
+  probs = 0.95,
+  na.rm = TRUE
+)
+
+multiomic_network_matrix <- multiomic_affinity
+multiomic_network_matrix[
+  multiomic_network_matrix < multiomic_edge_threshold
+] <- 0
+diag(multiomic_network_matrix) <- 0
+
+multiomic_network <- igraph::graph_from_adjacency_matrix(
+  multiomic_network_matrix,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+snf_annotations_lookup <- snf_annotations |>
+  dplyr::mutate(id = as.character(id))
+
+multiomic_annotation_idx <- match(
+  igraph::V(multiomic_network)$name,
+  snf_annotations_lookup$id
+)
+
+# Drop any network vertices without a matching multi-omic subtype
+# annotation, so vertex attributes stay aligned with the graph.
+multiomic_network_dropped <- igraph::V(multiomic_network)$name[
+  is.na(multiomic_annotation_idx)
+]
+if (length(multiomic_network_dropped) > 0L) {
+  message(
+    "Dropping participant(s) without multi-omic subtype annotations from the network: ",
+    paste(multiomic_network_dropped, collapse = ", ")
+  )
+  multiomic_network <- igraph::delete_vertices(
+    multiomic_network,
+    which(is.na(multiomic_annotation_idx))
+  )
+  multiomic_annotation_idx <- multiomic_annotation_idx[
+    !is.na(multiomic_annotation_idx)
+  ]
+}
+
+multiomic_network_annotations <- snf_annotations_lookup |>
+  dplyr::slice(multiomic_annotation_idx)
+
+multiomic_network <- multiomic_network |>
+  igraph::set_vertex_attr(
+    name = "snf_subtype",
+    value = multiomic_network_annotations$snf_subtype
+  ) |>
+  igraph::set_vertex_attr(
+    name = "treatment_group",
+    value = multiomic_network_annotations$unmasked
+  )
+
+set.seed(4328)
+multiomic_fr_layout <- igraph::layout_with_fr(multiomic_network)
+multiomic_network_layout <- ggnetwork::ggnetwork(
+  multiomic_network,
+  layout = multiomic_fr_layout,
+  weights = igraph::E(multiomic_network)$weight
+)
+
+ggplot2::ggplot(
+  multiomic_network_layout,
+  ggplot2::aes(x = x, y = y, xend = xend, yend = yend)
+) +
+  ggnetwork::geom_edges(
+    ggplot2::aes(linewidth = weight),
+    colour = "grey55",
+    show.legend = FALSE
+  ) +
+  ggnetwork::geom_nodes(
+    ggplot2::aes(
+      fill = snf_subtype,
+      shape = treatment_group
+    ),
+    alpha = 0.9,
+    size = 7,
+    colour = "black"
+  ) +
+  ggplot2::scale_size_continuous(range = c(0.1, 3)) +
+  ggplot2::scale_fill_manual(
+    values = subtype_palette,
+    name = "SNF Subtype"
+  ) +
+  ggplot2::scale_shape_manual(
+    values = c(21, 24),
+    name = "Treatment Group"
+  ) +
+  ggplot2::guides(
+    fill = ggplot2::guide_legend(
+      override.aes = list(shape = 21, colour = "black")
+    ),
+    shape = ggplot2::guide_legend(
+      override.aes = list(fill = "grey50")
+    )
+  ) +
+  ggnetwork::theme_blank() +
+  ggplot2::labs(title = "Fused similarity network") +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+#### Top Feature Contributions per Domain (NMI)
+
+Following the feature-ranking approach from the KCNI SNF tutorial
+(`rankFeaturesByNMI()`), each block's features (after the same MAD
+selection/Z-scoring used to build the fused network) are ranked by
+Normalized Mutual Information (NMI) with the fused-network subtypes. This
+identifies which features within each omics domain contribute most to the
+discovered subtypes, independent of treatment group.
+
+```{r}
+#| label: nmi-feature-ranking
+
+# rankFeaturesByNMI() returns list(NMI.scores, NMI.ranks): each element is a
+# plain vector aligned to the columns of the corresponding block (score/rank
+# per feature), NOT a feature-index/value matrix.
+nmi_result <- SNFtool::rankFeaturesByNMI(
+  data = snf_fit$processed_omics,
+  W    = snf_fit$fused_network
+)
+
+nmi_top_n     <- 10
+domain_names  <- names(snf_fit$processed_omics)
+
+top_features_by_domain <- do.call(rbind, lapply(seq_along(domain_names), function(i) {
+  domain    <- domain_names[i]
+  mat       <- snf_fit$processed_omics[[i]]
+  nmi_score <- nmi_result[[1]][[i]]
+  feat_idx  <- order(nmi_score, decreasing = TRUE)
+  n_take    <- min(nmi_top_n, length(feat_idx))
+  feat_idx  <- feat_idx[seq_len(n_take)]
+
+  data.frame(
+    Domain  = domain,
+    Rank    = seq_len(n_take),
+    Feature = colnames(mat)[feat_idx],
+    NMI     = nmi_score[feat_idx]
+  )
+}))
+
+top_features_by_domain |>
+  kableExtra::kbl(
+    digits = 3,
+    caption = "Top features per domain, ranked by NMI with fused-network subtypes"
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 9
+#| fig-height: 6
+#| lightbox:
+#|   description: "Top feature NMI by domain — click to enlarge"
+
+top_features_by_domain |>
+  dplyr::mutate(
+    Feature = forcats::fct_reorder(Feature, NMI)
+  ) |>
+  ggplot(aes(x = Feature, y = NMI, fill = Domain)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ Domain, scales = "free_y") +
+  labs(
+    x = NULL,
+    y = "Normalized Mutual Information (with fused-network subtypes)",
+    title = "Top Feature Contributions per Domain"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+#### Baseline Omics Heatmaps with Subgroup Annotation
+
+These heatmaps show Z-scored Visit 1 omics values. Participants and features
+are clustered globally from their standardized profiles; the colored row
+annotation identifies subgroup but does not constrain the clustering order.
+
+```{r}
+#| label: process-omics-list
+#| include: false
+
+# Helper: extract Visit 1 data for one omics block, join subgroup labels
+prepare_omics_v1 <- function(block_mat) {
+  block_mat |>
+    tibble::as_tibble(rownames = NA) |>
+    tibble::rownames_to_column("flora_id") |>
+    dplyr::left_join(
+      patient_design |> dplyr::select(fxs_sts_id, Visit1),
+      by = c("flora_id" = "Visit1")
+    ) |>
+    dplyr::filter(!is.na(fxs_sts_id)) |>
+    dplyr::left_join(
+      subgroup_data |> dplyr::select(id, Subgroup),
+      by = c("fxs_sts_id" = "id")
+    ) |>
+    dplyr::filter(!is.na(Subgroup)) |>
+    tibble::column_to_rownames("fxs_sts_id") |>
+    dplyr::select(-flora_id)
+}
+
+## Visit 1 omics blocks ##
+metabs     <- prepare_omics_v1(omics_list$compounds)
+lipids     <- prepare_omics_v1(omics_list$lipids)
+proteins   <- prepare_omics_v1(omics_list$proteins)
+proteomics <- prepare_omics_v1(omics_list$proteomics)
+
+metabs_matrix     <- metabs     |> dplyr::select(-Subgroup) |> as.matrix()
+lipids_matrix     <- lipids     |> dplyr::select(-Subgroup) |> as.matrix()
+proteins_matrix   <- proteins   |> dplyr::select(-Subgroup) |> as.matrix()
+proteomics_matrix <- proteomics |> dplyr::select(-Subgroup) |> as.matrix()
+
+# Shared palette & annotation setup (used by all four heatmaps below)
+subgroup_levels <- c("Metformin, 1", "Metformin, 2", "Placebo, 1", "Placebo, 2")
+subgroup_cols   <- c("#1b7837", "#a6dba0", "#762a83", "#c2a5cf")
+names(subgroup_cols) <- subgroup_levels
+annot_colors <- list(Subgroup = subgroup_cols)
+
+# Diverging palette: purple (low) – white (mid) – orange (high)
+omics_col_pal <- grDevices::colorRampPalette(
+  c("#7b3294", "#c2a5cf", "white", "#f1a340", "#a6611a")
+)(100)
+
+# Convenience wrapper: build pheatmap with consistent styling
+omics_heatmap <- function(mat, subgroup_vec, title) {
+  row_annot <- data.frame(
+    Subgroup  = subgroup_vec,
+    row.names = rownames(mat)
+  )
+  pheatmap::pheatmap(
+    scale(mat),
+    color             = omics_col_pal,
+    annotation_row    = row_annot,
+    annotation_colors = annot_colors,
+    cluster_rows      = TRUE,
+    cluster_cols      = TRUE,
+    show_rownames     = TRUE,
+    show_colnames     = FALSE,   # hide column labels — too many features to display
+    fontsize          = 10,
+    fontsize_row      = 9,
+    border_color      = NA,
+    main              = title
+  )
+}
+```
+
+
+#### Lipids
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Lipids heatmap - click to enlarge"
+omics_heatmap(lipids_matrix, lipids$Subgroup, "Lipids - Baseline (Visit 1), Z-scored")
+```
+
+#### Metabolomics
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Metabolomics heatmap - click to enlarge"
+omics_heatmap(metabs_matrix, metabs$Subgroup, "Metabolomics - Baseline (Visit 1), Z-scored")
+```
+
+#### Peptides
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Peptides heatmap - click to enlarge"
+omics_heatmap(proteins_matrix, proteins$Subgroup, "Peptides - Baseline (Visit 1), Z-scored")
+```
+
+#### Proteomics
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 6
+#| lightbox:
+#|   description: "Proteomics heatmap - click to enlarge"
+omics_heatmap(proteomics_matrix, proteomics$Subgroup, "Proteomics - Baseline (Visit 1), Z-scored")
+```
+
+#### Phenotype Changes by SNF Subtype
+
+This section uses all available phenotype change scores from
+`analytic_data.rds`. Each change is calculated as **Visit 3 − Visit 1** and
+is left on its original scale. Consequently, the direction of a favorable
+change depends on the instrument: lower scores are generally favorable for
+ABC, ADAMS, SNAP-IV, and target-behavior severity, whereas higher scores are
+generally favorable for language, PedsQL, Vineland-3, and cognition measures.
+Facial-emotion processing outcomes are descriptive and do not have a single
+favorable direction. Summaries are shown separately by SNF subtype and
+treatment group. No SNF subtype × treatment interaction groups or interaction
+terms are used. Because phenotype changes contribute to subtype construction,
+the subtype-stratified phenotype results characterize the discovered subtypes;
+their p-values are exploratory rather than independent confirmatory tests.
+
+```{r}
+#| label: phenotype-analysis-data
+#| include: false
+
+phenotype_domains <- list(
+  `Language samples` = c(
+    "nar_ndw50_a", "con_ndw50_a"
+  ),
+  `Aberrant Behavior Checklist (ABC)` = c(
+    "abc_comp_rev", "ss_i_irrit_rev", "ss_ii_leth_rev",
+    "ss_iii_stereo_rev", "ss_iv_hyper_rev", "ss_v_inapp_rev",
+    "ss_vi_socavoid_rev"
+  ),
+  `Anxiety, Depression, and Mood Scale (ADAMS)` = c(
+    "adams_manic", "adams_depress", "adams_avoid", "adams_anxious",
+    "adams_obsess"
+  ),
+  `Pediatric Quality of Life (PedsQL)` = c(
+    "pql_pf_tot", "pql_ef_tot", "pql_socf_tot", "pql_schf_tot"
+  ),
+  `SNAP-IV` = c(
+    "snap_adhd_combtot", "snap_odd_tot"
+  ),
+  `Target-behavior severity` = c(
+    "vas_tb1_beh", "vas_tb2_lang", "vas_tb3_eat"
+  ),
+  `Vineland Adaptive Behavior Scales, Third Edition` = c(
+    "vabs3_rc_rs", "vabs3_rc_ss", "vabs3_ec_rs", "vabs3_ec_ss",
+    "vabs3_wc_rs", "vabs3_wc_ss", "vabs3_pd_rs", "vabs3_pd_ss",
+    "vabs3_dd_rs", "vabs3_dd_ss", "vabs3_cd_rs", "vabs3_cd_ss",
+    "vabs3_is_rs", "vabs3_is_ss", "vabs3_ps_rs", "vabs3_ps_ss",
+    "vabs3_cs_rs", "vabs3_cs_ss", "vabs3_ac_ss", "vabs3_c_ss",
+    "vabs3_dl_ss", "vabs3_s_ss"
+  ),
+  `NIH Toolbox Cognition Battery` = c(
+    "tcb_flnkr_analytic", "tcb_dccs_analytic", "tcb_vocb_analytic",
+    "tcb_ptrncomp_analytic", "tcb_lstsrt_analytic",
+    "tcb_picseq_analytic", "tcb_read_analytic",
+    "tcb_spdmtch_analytic", "tcb_crystl_analytic",
+    "tcb_earlycomp_analytic", "tcb_cogcomp_analytic",
+    "tcb_fluid_analytic"
+  ),
+  `Facial-emotion processing` = c(
+    "Happy_Eyes_Pct", "Happy_Nose_Pct", "Happy_Mouth_Pct",
+    "Fear_Eyes_Pct", "Fear_Nose_Pct", "Fear_Mouth_Pct",
+    "Calm_Eyes_Pct", "Calm_Nose_Pct", "Calm_Mouth_Pct",
+    "All_Face_Pct_vP"
+  )
+)
+
+# The source data include variable labels for most clinical measures. Add
+# readable labels for the NIH Toolbox and facial-emotion measures that do not.
+phenotype_label_fallback <- c(
+  tcb_flnkr_analytic = "Flanker Inhibitory Control and Attention",
+  tcb_dccs_analytic = "Dimensional Change Card Sort",
+  tcb_vocb_analytic = "Picture Vocabulary",
+  tcb_ptrncomp_analytic = "Pattern Comparison Processing Speed",
+  tcb_lstsrt_analytic = "List Sorting Working Memory",
+  tcb_picseq_analytic = "Picture Sequence Memory",
+  tcb_read_analytic = "Oral Reading Recognition",
+  tcb_spdmtch_analytic = "Speeded Matching",
+  tcb_crystl_analytic = "Crystallized Cognition Composite",
+  tcb_earlycomp_analytic = "Early Childhood Cognition Composite",
+  tcb_cogcomp_analytic = "Total Cognition Composite",
+  tcb_fluid_analytic = "Fluid Cognition Composite",
+  Happy_Eyes_Pct = "Happy face: eyes (%)",
+  Happy_Nose_Pct = "Happy face: nose (%)",
+  Happy_Mouth_Pct = "Happy face: mouth (%)",
+  Fear_Eyes_Pct = "Fearful face: eyes (%)",
+  Fear_Nose_Pct = "Fearful face: nose (%)",
+  Fear_Mouth_Pct = "Fearful face: mouth (%)",
+  Calm_Eyes_Pct = "Calm face: eyes (%)",
+  Calm_Nose_Pct = "Calm face: nose (%)",
+  Calm_Mouth_Pct = "Calm face: mouth (%)",
+  All_Face_Pct_vP = "All face regions (%)"
+)
+
+phenotype_measure_cols <- unname(unlist(phenotype_domains))
+missing_phenotype_cols <- setdiff(
+  phenotype_measure_cols,
+  names(phenotype.data.diff)
+)
+# if (length(missing_phenotype_cols) > 0L) {
+#   stop(
+#     "Expected phenotype columns are missing: ",
+#     paste(missing_phenotype_cols, collapse = ", ")
+#   )
+# }
+
+# Build one SNF block per clinical domain. The NIH Toolbox and facial-emotion
+# domains are not present here because they were excluded from
+# `phenotype_snf_data` upstream.
+make_phenotype_snf_blocks <- function(data, domains) {
+  blocks <- lapply(
+    domains,
+    function(domain_measures) {
+      measures <- intersect(domain_measures, names(data))
+      measures <- measures[
+        vapply(
+          data[measures],
+          function(x) {
+            is.numeric(x) && sum(!is.na(x)) >= 2L &&
+              is.finite(stats::sd(x, na.rm = TRUE)) &&
+              stats::sd(x, na.rm = TRUE) > 0
+          },
+          logical(1)
+        )
+      ]
+
+      if (length(measures) == 0L) {
+        return(NULL)
+      }
+
+      block <- as.matrix(data[, measures, drop = FALSE])
+      storage.mode(block) <- "double"
+      rownames(block) <- as.character(data$fxs_sts_id)
+      block
+    }
+  )
+
+  blocks <- Filter(Negate(is.null), blocks)
+  if (length(blocks) < 2L) {
+    stop("At least two informative phenotype domains are required for SNF.")
+  }
+
+  blocks
+}
+
+combine_phenotype_snf_blocks <- function(processed_omics) {
+  do.call(cbind, processed_omics)
+}
+
+order_heatmap_rows_by_subtype <- function(mat, annotation, subtype_col) {
+  if (!subtype_col %in% names(annotation)) {
+    stop("Subtype annotation column is missing from the heatmap annotations.")
+  }
+  if (is.null(rownames(mat)) || is.null(rownames(annotation)) ||
+      !setequal(rownames(mat), rownames(annotation))) {
+    stop("Heatmap matrix and annotation participant IDs do not match.")
+  }
+
+  annotation <- annotation[rownames(mat), , drop = FALSE]
+  subtype <- droplevels(factor(annotation[[subtype_col]]))
+  if (anyNA(subtype)) {
+    stop("Subtype annotations are missing for at least one heatmap row.")
+  }
+
+  subtype_levels <- levels(subtype)
+  within_subtype_order <- lapply(
+    subtype_levels,
+    function(level) {
+      idx <- which(subtype == level)
+      if (length(idx) <= 1L) {
+        return(idx)
+      }
+
+      idx[stats::hclust(stats::dist(mat[idx, , drop = FALSE]))$order]
+    }
+  )
+  row_order <- unlist(within_subtype_order, use.names = FALSE)
+  subtype_sizes <- vapply(
+    subtype_levels,
+    function(level) sum(subtype == level),
+    integer(1)
+  )
+  gaps_row <- if (length(subtype_sizes) > 1L) {
+    utils::head(cumsum(subtype_sizes), -1L)
+  } else {
+    integer(0)
+  }
+
+  list(
+    matrix = mat[row_order, , drop = FALSE],
+    annotation = annotation[row_order, , drop = FALSE],
+    gaps_row = gaps_row
+  )
+}
+
+#' Draw a k=2-to-k=3 phenotype-subtype Sankey diagram
+#'
+#' @param sankey_data Long-format subtype assignments for each classification.
+#' @param base_size Base font size for the plot theme.
+#' @param plot_title Plot title.
+#' @return A [ggplot2::ggplot] Sankey diagram.
+#' @keywords internal
+#' @noRd
+draw_subtype_sankey <- function(
+  sankey_data,
+  base_size = 11,
+  plot_title = "Phenotype subtype assignments: k = 2 versus k = 3"
+) {
+  classification_levels <- c("k = 2", "k = 3")
+  subtype_levels <- c("Subtype 1", "Subtype 2", "Subtype 3")
+  subtype_colours <- stats::setNames(
+    scales::hue_pal()(length(subtype_levels)),
+    subtype_levels
+  )
+  sankey_mapping <- ggplot2::aes(
+    x = .data$classification,
+    stratum = .data$subtype,
+    alluvium = .data$id,
+    y = 1
+  )
+
+  ggplot2::ggplot(sankey_data, sankey_mapping) +
+    ggalluvial::geom_flow(
+      ggplot2::aes(fill = .data$subtype),
+      aes.flow = "backward",
+      alpha = 0.75,
+      colour = "white",
+      linewidth = 0.15,
+      outline.type = "full",
+      width = 1 / 12,
+      reverse = TRUE
+    ) +
+    ggalluvial::geom_stratum(
+      ggplot2::aes(fill = .data$subtype),
+      alpha = 1,
+      colour = "grey35",
+      linewidth = 0.35,
+      width = 1 / 8,
+      reverse = TRUE
+    ) +
+    ggalluvial::stat_stratum(
+      geom = "label",
+      ggplot2::aes(
+        label = paste0(
+          ggplot2::after_stat(.data$stratum), "\n",
+          ggplot2::after_stat(count), " (",
+          round(100 * ggplot2::after_stat(.data$prop)), "%)"
+        )
+      ),
+      colour = "grey10",
+      fill = "white",
+      alpha = 0.9,
+      linewidth = 0.2,
+      size = 3,
+      reverse = TRUE
+    ) +
+    ggplot2::scale_x_discrete(
+      limits = classification_levels,
+      expand = ggplot2::expansion(mult = 0.02, add = 0.35)
+    ) +
+    ggplot2::scale_fill_manual(
+      values = subtype_colours,
+      breaks = subtype_levels,
+      drop = FALSE,
+      name = "Phenotype subtype"
+    ) +
+    ggplot2::labs(
+      x = NULL,
+      y = "Participants",
+      title = plot_title,
+      subtitle = paste0(
+        "Each band follows one participant; band colour shows the k = 3 destination subtype.\n",
+        "Widths represent participants; labels show n (percent)."
+      ),
+      caption = paste(
+        "These are alternative classifications of the same cohort, not longitudinal transitions.",
+        "Subtype numbers are arbitrary labels."
+      )
+    ) +
+    ggplot2::theme_minimal(base_size = base_size) +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_blank(),
+      panel.grid = ggplot2::element_blank(),
+      legend.position = "bottom"
+    )
+}
+
+rank_phenotype_snf_features <- function(snf_fit) {
+  nmi_result <- SNFtool::rankFeaturesByNMI(
+    data = snf_fit$processed_omics,
+    W = snf_fit$fused_network
+  )
+  nmi_scores <- nmi_result[[1]]
+  blocks <- snf_fit$processed_omics
+
+  if (length(nmi_scores) != length(blocks)) {
+    stop("NMI output does not match the number of phenotype-domain blocks.")
+  }
+
+  feature_scores <- dplyr::bind_rows(
+    lapply(
+      seq_along(blocks),
+      function(i) {
+        features <- colnames(blocks[[i]])
+        scores <- as.numeric(nmi_scores[[i]])
+        if (length(features) != length(scores)) {
+          stop("NMI score count does not match the features in a phenotype domain.")
+        }
+        data.frame(
+          Domain = names(blocks)[[i]],
+          Feature = features,
+          NMI = scores,
+          stringsAsFactors = FALSE
+        )
+      }
+    )
+  )
+
+  feature_scores |>
+    dplyr::group_by(Domain) |>
+    dplyr::arrange(dplyr::desc(NMI), .by_group = TRUE) |>
+    dplyr::mutate(
+      n_vars = dplyr::n(),
+      top_n = ifelse(n_vars > 3L, 3L, 1L)
+    ) |>
+    dplyr::filter(dplyr::row_number() <= top_n) |>
+    dplyr::mutate(Rank = dplyr::row_number()) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(Domain = factor(Domain, levels = names(blocks))) |>
+    dplyr::arrange(Domain, Rank) |>
+    dplyr::select(Domain, Rank, Feature, NMI)
+}
+
+phenotype_snf_blocks <- make_phenotype_snf_blocks(
+  data = phenotype_snf_data,
+  domains = phenotype_domains
+)
+
+phenotype_analysis <- phenotype.data.diff |>
+  dplyr::mutate(fxs_sts_id = as.character(fxs_sts_id)) |>
+  dplyr::left_join(
+    snf_annotations |>
+      dplyr::transmute(
+        fxs_sts_id = as.character(id),
+        snf_subtype,
+        unmasked
+      ),
+    by = "fxs_sts_id"
+  )
+
+treatment_mismatch <- with(
+  phenotype_analysis,
+  !is.na(Treatment) & !is.na(unmasked) &
+    as.character(Treatment) != as.character(unmasked)
+)
+if (any(treatment_mismatch)) {
+  stop("Treatment assignments differ between phenotype and SNF annotations.")
+}
+
+phenotype_analysis <- phenotype_analysis |>
+  dplyr::filter(!is.na(snf_subtype)) |>
+  dplyr::mutate(
+    Treatment = factor(
+      as.character(Treatment),
+      levels = c("Metformin", "Placebo")
+    ),
+    snf_subtype = droplevels(factor(snf_subtype))
+  )
+
+phenotype_analysis <- phenotype_analysis |>
+  dplyr::select(-unmasked)
+
+for (variable in phenotype_measure_cols) {
+  if (!variable %in% names(phenotype_analysis)) {
+    next
+  }
+  variable_label <- attr(
+    phenotype.data.diff[[variable]],
+    "label",
+    exact = TRUE
+  )
+  if (is.null(variable_label) || !nzchar(variable_label)) {
+    variable_label <- if (variable %in% names(phenotype_label_fallback)) {
+      phenotype_label_fallback[[variable]]
+    } else {
+      NULL
+    }
+  }
+  if (!is.null(variable_label)) {
+    attr(phenotype_analysis[[variable]], "label") <- paste0(
+      variable_label,
+      " (V3 - V1)"
+    )
+  }
+}
+
+make_phenotype_summary <- function(data, by, domains, include_p = FALSE) {
+  domain_tables <- lapply(
+    domains,
+    function(domain) {
+      measures <- phenotype_domains[[domain]]
+      measures <- measures[
+        vapply(
+          data[measures],
+          function(x) any(!is.na(x)),
+          logical(1)
+        )
+      ]
+
+      summary_data <- data |>
+        dplyr::select(dplyr::all_of(c(by, measures)))
+
+      # Character grouping avoids incompatible factor levels when an outcome
+      # is entirely missing within one subgroup.
+      summary_data[[by]] <- as.character(summary_data[[by]])
+
+      summary_table <- summary_data |>
+        gtsummary::tbl_summary(
+          by = dplyr::all_of(by),
+          include = dplyr::all_of(measures),
+          type = dplyr::all_of(measures) ~ "continuous2",
+          statistic = dplyr::all_of(measures) ~
+            c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+          digits = dplyr::all_of(measures) ~ 1,
+          missing = "ifany"
+        )
+
+      if (include_p) {
+        summary_table <- summary_table |>
+          gtsummary::add_p()
+      }
+
+      summary_table |>
+        gtsummary::add_overall(last = TRUE)
+    }
+  )
+
+  gtsummary::tbl_stack(
+    tbls = domain_tables,
+    group_header = domains
+  )
+}
+
+phenotype_dictionary <- dplyr::bind_rows(
+  lapply(
+    names(phenotype_domains),
+    function(domain) {
+      data.frame(
+        Domain = factor(domain, levels = names(phenotype_domains)),
+        Variable = phenotype_domains[[domain]],
+        stringsAsFactors = FALSE
+      )
+    }
+  )
+)
+
+phenotype_coverage <- phenotype_dictionary |>
+  dplyr::mutate(
+    `Paired N` = vapply(
+      Variable,
+      function(variable) sum(!is.na(phenotype_analysis[[variable]])),
+      integer(1)
+    )
+  ) |>
+  dplyr::group_by(Domain) |>
+  dplyr::summarise(
+    `Outcomes available` = sum(`Paired N` > 0L),
+    `Paired N, median (range)` = sprintf(
+      "%.0f (%d-%d)",
+      stats::median(`Paired N`[`Paired N` > 0L]),
+      min(`Paired N`[`Paired N` > 0L]),
+      max(`Paired N`[`Paired N` > 0L])
+    ),
+    .groups = "drop"
+  )
+```
+
+The table below reports the paired sample size after restricting the
+phenotype data to participants included in the SNF analysis. Outcomes with no
+paired Visit 1 and Visit 3 values are omitted from subsequent tables.
+
+```{r tab.cap="Phenotype Data Coverage"}
+phenotype_coverage |>
+  knitr::kable(align = c("l", "c", "c")) |>
+  kableExtra::kable_classic(full_width = FALSE)
+```
+
+
+```{r tab.cap="Behavior, Quality of Life, and Language by SNF"}
+make_phenotype_summary(
+  data = phenotype_analysis,
+  by = "snf_subtype",
+  domains = names(phenotype_domains)[1:6],
+  include_p = TRUE
+)
+```
+
+<!-- # ```{r tab.cap="Adaptive Behavior and Cognition by SNF"} -->
+<!-- # make_phenotype_summary( -->
+<!-- #   data = phenotype_analysis, -->
+<!-- #   by = "snf_subtype", -->
+<!-- #   domains = names(phenotype_domains)[7:8], -->
+<!-- #   include_p = TRUE -->
+<!-- # ) -->
+<!-- # ``` -->
+
+<!-- # ```{r tab.cap="Facial-Emotion Processing by SNF"} -->
+<!-- # make_phenotype_summary( -->
+<!-- #   data = phenotype_analysis, -->
+<!-- #   by = "snf_subtype", -->
+<!-- #   domains = names(phenotype_domains)[9], -->
+<!-- #   include_p = TRUE -->
+<!-- # ) -->
+<!-- # ``` -->
+
+
+# Part 4: Phenotype-Based Similarity Network Fusion
+
+Phenotype change scores are represented as one input block per retained clinical
+domain. `run_snf_subtypes()` constructs an affinity matrix for each domain and
+then fuses those participant-similarity networks with `SNFtool::SNF()` before
+spectral clustering. Feature selection and normalization are label-free.
+
+```{r}
+#| include: false
+
+# SAP Step 2: retain up to the top 100 features within each clinical-domain
+# block by dispersion (MAD), with no reference to treatment group.
+# SAP Step 3: normalize each domain block against all subjects so treatment
+# assignment never enters the clustering input through centering or scaling.
+# SAP Step 4: preliminary SNF to obtain a fused network for cluster estimation
+snf_prelim_phenotype <- run_snf_subtypes(
+  omics                    = phenotype_snf_blocks,
+  n_clusters               = 2,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad"
+)
+
+# SAP Step 4: data-driven cluster number selection (Eigen-gap criterion)
+n_clust_est_phenotype         <- SNFtool::estimateNumberOfClustersGivenGraph(
+  W = snf_prelim_phenotype$fused_network, NUMC = 2:8
+)
+n_clusters_selected_phenotype <- n_clust_est_phenotype[[1]]
+
+# Final run with data-selected number of clusters
+snf_fit_phenotype <- run_snf_subtypes(
+  omics                    = phenotype_snf_blocks,
+  n_clusters               = n_clusters_selected_phenotype,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad"
+)
+```
+
+The Eigen-gap criterion suggests **`r n_clusters_selected_phenotype`**
+cluster(s) (Rotation cost criterion: `r n_clust_est_phenotype[[2]]`).
+Within each retained clinical domain, up to 100 features are selected by
+median absolute deviation without reference to treatment. Each domain block is
+Z-scored across all subjects before the domain-specific affinity networks are
+fused, keeping subtype discovery label-free.
+
+```{r}
+# Join phenotype subtypes to the full phenotype-clustering cohort
+# (`phenotype_snf_data`, ~all participants with complete phenotype change
+# scores), NOT the 24-participant multi-omics `compare_clusters` cohort.
+# `compare_clusters` is restricted to participants with complete
+# metabolomics/lipidomics/peptide/proteomics profiling (the original LCA +
+# DIABLO sub-study), which is unrelated to phenotype data completeness.
+# Joining phenotype subtypes onto `compare_clusters` would silently drop
+# every phenotype-clustered participant outside that 24-person cohort from
+# this table, Section 4.1's heatmap, and Section 4.2's network — even
+# though the clustering itself (`snf_fit_phenotype`, above) already runs on
+# the full phenotype cohort. The 24-person multi-omics restriction is
+# reintroduced only in Section 4.3, where comparing phenotype subtypes to
+# multi-omic subtypes requires participants present in both analyses.
+phenotype_clinical_ids <- phenotype_snf_data |>
+  dplyr::transmute(
+    id = fxs_sts_id,
+    unmasked = Treatment
+  )
+
+snf_annotations_phenotype <- annotate_snf_subtypes(
+  subtypes = snf_fit_phenotype$subtypes,
+  clinical_data = phenotype_clinical_ids,
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype_phenotype = factor(snf_subtype)
+  )
+
+snf_annotations_phenotype |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype_phenotype,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype_phenotype ~ "Phenotype Subtype"
+    )
+  )
+```
+
+## 4.1 Phenotype Change Heatmap by Subgroup
+
+The heatmap displays the domain-specific phenotype change-score blocks used for
+SNF. Values are standardized within outcome across participants. The phenotype
+SNF cohort uses complete-case filtering (`na.omit()`), so participants with
+missing retained phenotype data are excluded rather than imputed.
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 7
+#| lightbox:
+#|   description: "Phenotype change heatmap - click to enlarge"
+
+phenotype_heatmap_matrix <- combine_phenotype_snf_blocks(
+  snf_fit_phenotype$processed_omics
+)
+
+phenotype_heatmap_annotations <- snf_annotations_phenotype |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(rownames(phenotype_heatmap_matrix), id))
+
+if (anyNA(phenotype_heatmap_annotations$id)) {
+  stop("Phenotype heatmap annotations are missing for at least one participant.")
+}
+
+phenotype_heatmap_annot <- data.frame(
+  `Phenotype Subtype` = phenotype_heatmap_annotations$snf_subtype_phenotype,
+  `Treatment Group` = phenotype_heatmap_annotations$unmasked,
+  row.names = phenotype_heatmap_annotations$id,
+  check.names = FALSE
+)
+
+phenotype_subtype_levels <- phenotype_heatmap_annot[["Phenotype Subtype"]] |>
+  droplevels() |>
+  levels()
+phenotype_subtype_palette <- stats::setNames(
+  scales::hue_pal()(length(phenotype_subtype_levels)),
+  phenotype_subtype_levels
+)
+phenotype_heatmap_display <- order_heatmap_rows_by_subtype(
+  mat = phenotype_heatmap_matrix,
+  annotation = phenotype_heatmap_annot,
+  subtype_col = "Phenotype Subtype"
+)
+
+pheatmap::pheatmap(
+  phenotype_heatmap_display$matrix,
+  color = omics_col_pal,
+  annotation_row = phenotype_heatmap_display$annotation,
+  annotation_colors = list(
+    `Phenotype Subtype` = phenotype_subtype_palette,
+    `Treatment Group` = treatment_palette
+  ),
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  gaps_row = phenotype_heatmap_display$gaps_row,
+  show_rownames = TRUE,
+  show_colnames = FALSE,
+  fontsize = 10,
+  fontsize_row = 9,
+  border_color = NA,
+  main = "Phenotype Changes (Visit 3 - Visit 1), Z-scored"
+)
+```
+
+## 4.2 Phenotype Similarity Network
+
+The network displays the strongest 5% of participant-to-participant
+similarities from the phenotype affinity matrix. Node color identifies the
+phenotype-derived subtype, node shape identifies treatment group, and edge
+opacity represents similarity strength.
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 10
+#| fig-height: 8
+#| lightbox:
+#|   description: "Phenotype similarity network — click to enlarge"
+
+phenotype_affinity <- snf_fit_phenotype$fused_network
+phenotype_edge_values <- phenotype_affinity[upper.tri(phenotype_affinity)]
+phenotype_edge_threshold <- stats::quantile(
+  phenotype_edge_values,
+  probs = 0.95,
+  na.rm = TRUE
+)
+
+phenotype_network_matrix <- phenotype_affinity
+phenotype_network_matrix[
+  phenotype_network_matrix < phenotype_edge_threshold
+] <- 0
+diag(phenotype_network_matrix) <- 0
+
+phenotype_network <- igraph::graph_from_adjacency_matrix(
+  phenotype_network_matrix,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+snf_annotations_phenotype_lookup <- snf_annotations_phenotype |>
+  dplyr::mutate(id = as.character(id))
+
+# `dplyr::slice(match(...))` silently drops rows for any unmatched vertex
+# name instead of producing an NA row, which would desync the annotations
+# from the graph's vertex count. Explicitly drop any network vertices that
+# lack a matching phenotype-subtype annotation (e.g. participants excluded
+# from phenotype-based clustering by `na.omit()` upstream) before assigning
+# vertex attributes, so the two stay aligned.
+phenotype_annotation_idx <- match(
+  igraph::V(phenotype_network)$name,
+  snf_annotations_phenotype_lookup$id
+)
+
+phenotype_network_dropped <- igraph::V(phenotype_network)$name[
+  is.na(phenotype_annotation_idx)
+]
+if (length(phenotype_network_dropped) > 0L) {
+  message(
+    "Dropping participant(s) without phenotype subtype annotations from the network: ",
+    paste(phenotype_network_dropped, collapse = ", ")
+  )
+  phenotype_network <- igraph::delete_vertices(
+    phenotype_network,
+    which(is.na(phenotype_annotation_idx))
+  )
+  phenotype_annotation_idx <- phenotype_annotation_idx[
+    !is.na(phenotype_annotation_idx)
+  ]
+}
+
+phenotype_network_annotations <- snf_annotations_phenotype_lookup |>
+  dplyr::slice(phenotype_annotation_idx)
+
+phenotype_network <- phenotype_network |>
+  igraph::set_vertex_attr(
+    name = "phenotype_subtype",
+    value = phenotype_network_annotations$snf_subtype_phenotype
+  ) |>
+  igraph::set_vertex_attr(
+    name = "treatment_group",
+    value = phenotype_network_annotations$unmasked
+  )
+
+set.seed(4328)
+fr_layout <- igraph::layout_with_fr(phenotype_network)
+phenotype_network_layout <- ggnetwork::ggnetwork(
+  phenotype_network,
+  layout = fr_layout,
+  weights = igraph::E(phenotype_network)$weight
+)
+
+ggplot2::ggplot(
+  phenotype_network_layout,
+  ggplot2::aes(x = x, y = y, xend = xend, yend = yend)
+) +
+  ggnetwork::geom_edges(
+    ggplot2::aes(linewidth = weight),
+    colour = "grey55",
+    show.legend = FALSE
+  ) +
+  ggnetwork::geom_nodes(
+    ggplot2::aes(
+      fill = phenotype_subtype,
+      shape = treatment_group
+    ),
+    alpha = 0.9,
+    size = 7,
+    colour = "black"
+  ) +
+  ggplot2::scale_size_continuous(range = c(0.1, 3)) +
+  ggplot2::scale_fill_manual(
+    values = phenotype_subtype_palette,
+    name = "Phenotype Subtype"
+  ) +
+  ggplot2::scale_shape_manual(
+    values = c(21, 24),
+    name = "Treatment Group"
+  ) +
+  ggplot2::guides(
+    fill = ggplot2::guide_legend(
+      override.aes = list(shape = 21, colour = "black")
+    ),
+    shape = ggplot2::guide_legend(
+      override.aes = list(fill = "grey50")
+    )
+  ) +
+  ggnetwork::theme_blank() +
+  ggplot2::labs(title = "Fused similarity network") +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+## 4.3 Multi-Omics and Phenotype Classification Comparison
+
+The two subtype assignments are joined by participant ID and combined into
+cross-classified rows. Treatment groups are displayed in columns. Subtype
+numbers are arbitrary labels, so equally numbered multi-omic and phenotype
+subtypes should not be assumed to represent the same group.
+
+```{r}
+multiomic_classification <- snf_annotations |>
+  dplyr::transmute(
+    id = as.character(id),
+    snf_subtype_multiomic = droplevels(factor(snf_subtype)),
+    treatment_group = droplevels(factor(unmasked))
+  )
+
+phenotype_classification <- snf_annotations_phenotype |>
+  dplyr::transmute(
+    id = as.character(id),
+    snf_subtype_phenotype = droplevels(factor(snf_subtype_phenotype))
+  )
+
+if (anyDuplicated(multiomic_classification$id) ||
+    anyDuplicated(phenotype_classification$id)) {
+  stop("Each classification must contain one row per participant.")
+}
+
+# Participants with any missing phenotype change score are excluded from
+# phenotype-based clustering (see the `na.omit()` step above), so the two
+# classifications need not contain identical participant sets. Only
+# participants present in both are compared below.
+phenotype_only_dropped <- setdiff(
+  multiomic_classification$id,
+  phenotype_classification$id
+)
+
+snf_classification_comparison <- multiomic_classification |>
+  dplyr::inner_join(
+    phenotype_classification,
+    by = "id"
+  ) |>
+  dplyr::mutate(
+    cross_classification = factor(
+      paste0(
+        "Multi-omics ", snf_subtype_multiomic,
+        " / Phenotype ", snf_subtype_phenotype
+      )
+    )
+  )
+```
+
+```{r}
+#| results: asis
+
+# Render as a collapsible callout instead of a raw message/cat() dump, so a
+# long ID list doesn't clutter the report body but is still available to
+# readers who want to audit exclusions.
+if (length(phenotype_only_dropped) > 0L) {
+  cat(glue::glue(
+    "::: {{.callout-note collapse=\"true\"}}\n",
+    "## {length(phenotype_only_dropped)} participant(s) excluded from this comparison\n\n",
+    "These participants have a multi-omics subtype but were excluded from ",
+    "phenotype-based clustering due to missing phenotype change score(s):\n\n",
+    "{paste(sort(phenotype_only_dropped), collapse = ', ')}\n",
+    ":::\n"
+  ))
+}
+```
+
+```{r}
+snf_classification_comparison |>
+  gtsummary::tbl_cross(
+    row = cross_classification,
+    col = treatment_group,
+    label = list(
+      cross_classification ~ "Multi-Omics / Phenotype Subtype",
+      treatment_group ~ "Treatment Group"
+    )
+  )
+```
+
+## 4.4 Top Phenotype Feature Contributions (NMI)
+
+Each retained clinical domain is an SNF input block. `rankFeaturesByNMI()`
+therefore returns NMI scores for the features within each domain-specific
+block. The table and plot show the top three features from domains with more
+than three measures and the top feature otherwise.
+
+```{r}
+#| label: nmi-feature-ranking-phenotype
+
+top_phenotype_features <- rank_phenotype_snf_features(snf_fit_phenotype)
+
+top_phenotype_features |>
+  kableExtra::kbl(
+    digits = 3,
+    caption = paste(
+      "Top phenotype features per clinical domain, ranked by NMI with",
+      "phenotype subtypes (top 3 for domains with >3 retained measures,",
+      "top 1 otherwise)"
+    )
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 9
+#| fig-height: 7
+#| lightbox:
+#|   description: "Top phenotype feature NMI — click to enlarge"
+
+top_phenotype_features |>
+  dplyr::mutate(
+    Feature = forcats::fct_reorder(Feature, NMI)
+  ) |>
+  ggplot(aes(x = Feature, y = NMI, fill = Domain)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ Domain, scales = "free_y") +
+  labs(
+    x = NULL,
+    y = "Normalized Mutual Information (with phenotype subtypes)",
+    title = "Top Phenotype Feature Contributions per Domain"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+# Part 5: Phenotype-Based Similarity Network Fusion with Fixed Cluster Number (k = 3)
+
+This section repeats the multi-domain phenotype SNF analysis from Part 4 with
+the same label-free feature selection, domain-wise normalization, and network
+fusion steps, but fixes the number of clusters to **`n_clusters = 3`** rather
+than using the Eigen-gap-selected value.
+
+```{r}
+#| include: false
+
+# Same label-free preprocessing as Part 4 (MAD feature selection, Z-score
+# against all subjects), but with n_clusters fixed at 3 rather than
+# data-driven (Eigen-gap) selection.
+snf_fit_phenotype_k3 <- run_snf_subtypes(
+  omics                    = phenotype_snf_blocks,
+  n_clusters               = 3,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad"
+)
+```
+
+Cluster number fixed at **k = 3**.
+
+Within each retained clinical domain, up to 100 features are selected by
+median absolute deviation without reference to treatment. Each domain block is
+Z-scored across all subjects before the domain-specific affinity networks are
+fused, keeping subtype discovery label-free.
+
+```{r}
+# Reuses `phenotype_clinical_ids` (all participants with complete phenotype
+# change scores) defined in Part 4, NOT the 24-participant multi-omics
+# `compare_clusters` cohort.
+snf_annotations_phenotype_k3 <- annotate_snf_subtypes(
+  subtypes = snf_fit_phenotype_k3$subtypes,
+  clinical_data = phenotype_clinical_ids,
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype_phenotype_k3 = factor(snf_subtype)
+  )
+
+snf_annotations_phenotype_k3 |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype_phenotype_k3,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype_phenotype_k3 ~ "Phenotype Subtype (k = 3)"
+    )
+  )
+```
+
+## 5.1 Phenotype Subtype Classification from k = 2 to k = 3
+
+This Sankey diagram compares the two phenotype-clustering solutions for the
+same complete-case cohort. Each band follows one participant from the k = 2
+assignment to the k = 3 assignment. It visualizes how the k = 2 groups split
+or overlap when a third subtype is requested; it does not represent change
+over time. Subtype numbers are arbitrary cluster labels.
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 10
+#| fig-height: 7
+#| lightbox:
+#|   description: "Phenotype subtype assignments from k=2 to k=3 - click to enlarge"
+
+phenotype_transition_k2 <- snf_annotations_phenotype |>
+  dplyr::transmute(
+    id = as.character(id),
+    `k = 2` = as.character(snf_subtype_phenotype)
+  )
+phenotype_transition_k3 <- snf_annotations_phenotype_k3 |>
+  dplyr::transmute(
+    id = as.character(id),
+    `k = 3` = as.character(snf_subtype_phenotype_k3)
+  )
+
+if (anyDuplicated(phenotype_transition_k2$id) ||
+    anyDuplicated(phenotype_transition_k3$id)) {
+  stop("Each phenotype classification must contain one row per participant.")
+}
+if (!setequal(phenotype_transition_k2$id, phenotype_transition_k3$id)) {
+  stop("The k = 2 and k = 3 phenotype classifications contain different participants.")
+}
+
+phenotype_subtype_sankey_data <- phenotype_transition_k2 |>
+  dplyr::inner_join(
+    phenotype_transition_k3,
+    by = "id"
+  ) |>
+  tidyr::pivot_longer(
+    cols = c(`k = 2`, `k = 3`),
+    names_to = "classification",
+    values_to = "subtype"
+  ) |>
+  dplyr::mutate(
+    classification = factor(classification, levels = c("k = 2", "k = 3")),
+    subtype = factor(
+      subtype,
+      levels = c("Subtype 1", "Subtype 2", "Subtype 3")
+    )
+  )
+
+draw_subtype_sankey(
+  sankey_data = phenotype_subtype_sankey_data,
+  base_size = 11
+)
+```
+
+## 5.2 Phenotype Change Heatmap by Subgroup (k = 3)
+
+The heatmap displays the domain-specific phenotype change-score blocks used for
+SNF. Values are standardized within outcome across participants. The phenotype
+SNF cohort uses complete-case filtering (`na.omit()`), so participants with
+missing retained phenotype data are excluded rather than imputed.
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 7
+#| lightbox:
+#|   description: "Phenotype change heatmap (k=3) - click to enlarge"
+
+phenotype_heatmap_matrix_k3 <- combine_phenotype_snf_blocks(
+  snf_fit_phenotype_k3$processed_omics
+)
+
+phenotype_heatmap_annotations_k3 <- snf_annotations_phenotype_k3 |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(rownames(phenotype_heatmap_matrix_k3), id))
+
+if (anyNA(phenotype_heatmap_annotations_k3$id)) {
+  stop("Phenotype heatmap annotations are missing for at least one participant (k = 3).")
+}
+
+phenotype_heatmap_annot_k3 <- data.frame(
+  `Phenotype Subtype` = phenotype_heatmap_annotations_k3$snf_subtype_phenotype_k3,
+  `Treatment Group` = phenotype_heatmap_annotations_k3$unmasked,
+  row.names = phenotype_heatmap_annotations_k3$id,
+  check.names = FALSE
+)
+
+phenotype_subtype_levels_k3 <- phenotype_heatmap_annot_k3[["Phenotype Subtype"]] |>
+  droplevels() |>
+  levels()
+phenotype_subtype_palette_k3 <- stats::setNames(
+  scales::hue_pal()(length(phenotype_subtype_levels_k3)),
+  phenotype_subtype_levels_k3
+)
+phenotype_heatmap_display_k3 <- order_heatmap_rows_by_subtype(
+  mat = phenotype_heatmap_matrix_k3,
+  annotation = phenotype_heatmap_annot_k3,
+  subtype_col = "Phenotype Subtype"
+)
+
+pheatmap::pheatmap(
+  phenotype_heatmap_display_k3$matrix,
+  color = omics_col_pal,
+  annotation_row = phenotype_heatmap_display_k3$annotation,
+  annotation_colors = list(
+    `Phenotype Subtype` = phenotype_subtype_palette_k3,
+    `Treatment Group` = treatment_palette
+  ),
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  gaps_row = phenotype_heatmap_display_k3$gaps_row,
+  show_rownames = TRUE,
+  show_colnames = FALSE,
+  fontsize = 10,
+  fontsize_row = 9,
+  border_color = NA,
+  main = "Phenotype Changes (Visit 3 - Visit 1), Z-scored (k = 3)"
+)
+```
+
+## 5.3 Phenotype Similarity Network (k = 3)
+
+The network displays the strongest 5% of participant-to-participant
+similarities from the phenotype affinity matrix. Node color identifies the
+phenotype-derived subtype, node shape identifies treatment group, and edge
+opacity represents similarity strength.
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 10
+#| fig-height: 8
+#| lightbox:
+#|   description: "Phenotype similarity network (k=3) — click to enlarge"
+
+phenotype_affinity_k3 <- snf_fit_phenotype_k3$fused_network
+phenotype_edge_values_k3 <- phenotype_affinity_k3[upper.tri(phenotype_affinity_k3)]
+phenotype_edge_threshold_k3 <- stats::quantile(
+  phenotype_edge_values_k3,
+  probs = 0.95,
+  na.rm = TRUE
+)
+
+phenotype_network_matrix_k3 <- phenotype_affinity_k3
+phenotype_network_matrix_k3[
+  phenotype_network_matrix_k3 < phenotype_edge_threshold_k3
+] <- 0
+diag(phenotype_network_matrix_k3) <- 0
+
+phenotype_network_k3 <- igraph::graph_from_adjacency_matrix(
+  phenotype_network_matrix_k3,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+snf_annotations_phenotype_k3_lookup <- snf_annotations_phenotype_k3 |>
+  dplyr::mutate(id = as.character(id))
+
+# Drop any network vertices without a matching phenotype-subtype annotation
+# so vertex attributes stay aligned with the graph.
+phenotype_annotation_idx_k3 <- match(
+  igraph::V(phenotype_network_k3)$name,
+  snf_annotations_phenotype_k3_lookup$id
+)
+
+phenotype_network_dropped_k3 <- igraph::V(phenotype_network_k3)$name[
+  is.na(phenotype_annotation_idx_k3)
+]
+if (length(phenotype_network_dropped_k3) > 0L) {
+  message(
+    "Dropping participant(s) without phenotype subtype annotations from the network (k = 3): ",
+    paste(phenotype_network_dropped_k3, collapse = ", ")
+  )
+  phenotype_network_k3 <- igraph::delete_vertices(
+    phenotype_network_k3,
+    which(is.na(phenotype_annotation_idx_k3))
+  )
+  phenotype_annotation_idx_k3 <- phenotype_annotation_idx_k3[
+    !is.na(phenotype_annotation_idx_k3)
+  ]
+}
+
+phenotype_network_annotations_k3 <- snf_annotations_phenotype_k3_lookup |>
+  dplyr::slice(phenotype_annotation_idx_k3)
+
+phenotype_network_k3 <- phenotype_network_k3 |>
+  igraph::set_vertex_attr(
+    name = "phenotype_subtype",
+    value = phenotype_network_annotations_k3$snf_subtype_phenotype_k3
+  ) |>
+  igraph::set_vertex_attr(
+    name = "treatment_group",
+    value = phenotype_network_annotations_k3$unmasked
+  )
+
+set.seed(4328)
+fr_layout_k3 <- igraph::layout_with_fr(phenotype_network_k3)
+phenotype_network_layout_k3 <- ggnetwork::ggnetwork(
+  phenotype_network_k3,
+  layout = fr_layout_k3,
+  weights = igraph::E(phenotype_network_k3)$weight
+)
+
+ggplot2::ggplot(
+  phenotype_network_layout_k3,
+  ggplot2::aes(x = x, y = y, xend = xend, yend = yend)
+) +
+  ggnetwork::geom_edges(
+    ggplot2::aes(linewidth = weight),
+    colour = "grey55",
+    show.legend = FALSE
+  ) +
+  ggnetwork::geom_nodes(
+    ggplot2::aes(
+      fill = phenotype_subtype,
+      shape = treatment_group
+    ),
+    alpha = 0.9,
+    size = 7,
+    colour = "black"
+  ) +
+  ggplot2::scale_size_continuous(range = c(0.1, 3)) +
+  ggplot2::scale_fill_manual(
+    values = phenotype_subtype_palette_k3,
+    name = "Phenotype Subtype"
+  ) +
+  ggplot2::scale_shape_manual(
+    values = c(21, 24),
+    name = "Treatment Group"
+  ) +
+  ggplot2::guides(
+    fill = ggplot2::guide_legend(
+      override.aes = list(shape = 21, colour = "black")
+    ),
+    shape = ggplot2::guide_legend(
+      override.aes = list(fill = "grey50")
+    )
+  ) +
+  ggnetwork::theme_blank() +
+  ggplot2::labs(title = "Fused similarity network (k = 3)") +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+## 5.4 Multi-Omics and Phenotype Classification Comparison (k = 3)
+
+The two subtype assignments are joined by participant ID and combined into
+cross-classified rows. Treatment groups are displayed in columns. Subtype
+numbers are arbitrary labels, so equally numbered multi-omic and phenotype
+subtypes should not be assumed to represent the same group. The multi-omic
+subtypes here are the Part 3 (Eigen-gap-selected) assignments, unchanged;
+only the phenotype subtypes are fixed at k = 3.
+
+```{r}
+phenotype_classification_k3 <- snf_annotations_phenotype_k3 |>
+  dplyr::transmute(
+    id = as.character(id),
+    snf_subtype_phenotype_k3 = droplevels(factor(snf_subtype_phenotype_k3))
+  )
+
+if (anyDuplicated(multiomic_classification$id) ||
+    anyDuplicated(phenotype_classification_k3$id)) {
+  stop("Each classification must contain one row per participant (k = 3).")
+}
+
+phenotype_only_dropped_k3 <- setdiff(
+  multiomic_classification$id,
+  phenotype_classification_k3$id
+)
+
+snf_classification_comparison_k3 <- multiomic_classification |>
+  dplyr::inner_join(
+    phenotype_classification_k3,
+    by = "id"
+  ) |>
+  dplyr::mutate(
+    cross_classification = factor(
+      paste0(
+        "Multi-omics ", snf_subtype_multiomic,
+        " / Phenotype ", snf_subtype_phenotype_k3
+      )
+    )
+  )
+```
+
+```{r}
+#| results: asis
+
+if (length(phenotype_only_dropped_k3) > 0L) {
+  cat(glue::glue(
+    "::: {{.callout-note collapse=\"true\"}}\n",
+    "## {length(phenotype_only_dropped_k3)} participant(s) excluded from this comparison\n\n",
+    "These participants have a multi-omics subtype but were excluded from ",
+    "phenotype-based clustering due to missing phenotype change score(s):\n\n",
+    "{paste(sort(phenotype_only_dropped_k3), collapse = ', ')}\n",
+    ":::\n"
+  ))
+}
+```
+
+```{r}
+snf_classification_comparison_k3 |>
+  gtsummary::tbl_cross(
+    row = cross_classification,
+    col = treatment_group,
+    label = list(
+      cross_classification ~ "Multi-Omics / Phenotype Subtype (k = 3)",
+      treatment_group ~ "Treatment Group"
+    )
+  )
+```
+
+## 5.5 Top Phenotype Feature Contributions (NMI, k = 3)
+
+As in Part 4, each retained clinical domain is an SNF input block. NMI scores
+are calculated within those blocks against the k = 3 phenotype subtypes, and
+the top features are reported within each domain.
+
+```{r}
+#| label: nmi-feature-ranking-phenotype-k3
+
+top_phenotype_features_k3 <- rank_phenotype_snf_features(snf_fit_phenotype_k3)
+
+top_phenotype_features_k3 |>
+  kableExtra::kbl(
+    digits = 3,
+    caption = paste(
+      "Top phenotype features per clinical domain, ranked by NMI with",
+      "k = 3 phenotype subtypes (top 3 for domains with >3 retained measures,",
+      "top 1 otherwise)"
+    )
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 9
+#| fig-height: 7
+#| lightbox:
+#|   description: "Top phenotype feature NMI (k=3) — click to enlarge"
+
+top_phenotype_features_k3 |>
+  dplyr::mutate(
+    Feature = forcats::fct_reorder(Feature, NMI)
+  ) |>
+  ggplot(aes(x = Feature, y = NMI, fill = Domain)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ Domain, scales = "free_y") +
+  labs(
+    x = NULL,
+    y = "Normalized Mutual Information (with k = 3 phenotype subtypes)",
+    title = "Top Phenotype Feature Contributions per Domain (k = 3)"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+# Part 6: Phenotype Subgroup Analysis - Age 6-11 Years
+
+This section repeats the phenotype analyses from Parts 4 and 5 using only
+participants with `age_group == "Age 6-11"`. This is the project field that
+records the requested age-group type. All preprocessing, feature selection,
+normalization, clustering, and feature-ranking steps are recalculated within
+this subgroup. Part 6 uses phenotype-domain blocks only; no multi-omic data or
+multi-omic subtype assignments enter these models.
+
+```{r}
+#| include: false
+
+age_6_11_group_type <- "Age 6-11"
+
+# Restrict the complete phenotype-change cohort before preprocessing so every
+# Part 6 result is estimated solely from participants aged 6–11 years.
+phenotype_snf_data_age_6_11 <- phenotype_snf_data |>
+  dplyr::filter(age_group == age_6_11_group_type)
+
+if (nrow(phenotype_snf_data_age_6_11) < 3L) {
+  stop("At least three complete phenotype records are required for the age 6–11 subgroup analysis.")
+}
+
+phenotype_snf_blocks_age_6_11 <- make_phenotype_snf_blocks(
+  data = phenotype_snf_data_age_6_11,
+  domains = phenotype_domains
+)
+```
+
+## Phenotype-Based Similarity Network Fusion
+
+Within the age 6-11 subgroup, phenotype change scores are represented as one
+input block per retained clinical domain. `run_snf_subtypes()` constructs an
+affinity matrix for each domain and fuses the resulting networks before
+spectral clustering; feature selection and normalization remain label-free.
+
+```{r}
+#| include: false
+
+# SAP Step 2: retain up to the top 100 features within each clinical-domain
+# block by dispersion (MAD), with no reference to treatment group.
+# SAP Step 3: normalize each domain block against all subjects so treatment
+# assignment never enters the clustering input through centering or scaling.
+# SAP Step 4: preliminary SNF to obtain a fused network for cluster estimation
+snf_prelim_phenotype_age_6_11 <- run_snf_subtypes(
+  omics                    = phenotype_snf_blocks_age_6_11,
+  n_clusters               = 2,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad"
+)
+
+# SAP Step 4: data-driven cluster number selection (Eigen-gap criterion)
+n_clust_est_phenotype_age_6_11         <- SNFtool::estimateNumberOfClustersGivenGraph(
+  W = snf_prelim_phenotype_age_6_11$fused_network, NUMC = 2:8
+)
+n_clusters_selected_phenotype_age_6_11 <- n_clust_est_phenotype_age_6_11[[1]]
+
+# Final run with data-selected number of clusters
+snf_fit_phenotype_age_6_11 <- run_snf_subtypes(
+  omics                    = phenotype_snf_blocks_age_6_11,
+  n_clusters               = n_clusters_selected_phenotype_age_6_11,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad"
+)
+```
+
+The Eigen-gap criterion suggests **`r n_clusters_selected_phenotype_age_6_11`**
+cluster(s) (Rotation cost criterion: `r n_clust_est_phenotype_age_6_11[[2]]`).
+Within each retained clinical domain, up to 100 features are selected by
+median absolute deviation without reference to treatment. Each domain block is
+Z-scored across all subjects before the domain-specific affinity networks are
+fused, keeping subtype discovery label-free.
+
+```{r}
+# Join phenotype subtypes to the complete age 6-11 phenotype-change cohort.
+# `phenotype_snf_data_age_6_11` has already been restricted before clustering.
+phenotype_clinical_ids_age_6_11 <- phenotype_snf_data_age_6_11 |>
+  dplyr::transmute(
+    id = fxs_sts_id,
+    unmasked = Treatment
+  )
+
+snf_annotations_phenotype_age_6_11 <- annotate_snf_subtypes(
+  subtypes = snf_fit_phenotype_age_6_11$subtypes,
+  clinical_data = phenotype_clinical_ids_age_6_11,
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype_phenotype = factor(snf_subtype)
+  )
+
+snf_annotations_phenotype_age_6_11 |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype_phenotype,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype_phenotype ~ "Phenotype Subtype (Age 6-11)"
+    )
+  )
+```
+
+### Phenotype Change Heatmap by Subgroup
+
+The heatmap displays the domain-specific phenotype change-score blocks used for
+SNF. Values are standardized within outcome across participants. The phenotype
+SNF cohort uses complete-case filtering (`na.omit()`), so participants with
+missing retained phenotype data are excluded rather than imputed.
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 7
+#| lightbox:
+#|   description: "Phenotype change heatmap - click to enlarge"
+
+phenotype_heatmap_matrix_age_6_11 <- combine_phenotype_snf_blocks(
+  snf_fit_phenotype_age_6_11$processed_omics
+)
+
+phenotype_heatmap_annotations_age_6_11 <- snf_annotations_phenotype_age_6_11 |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(rownames(phenotype_heatmap_matrix_age_6_11), id))
+
+if (anyNA(phenotype_heatmap_annotations_age_6_11$id)) {
+  stop("Phenotype heatmap annotations are missing for at least one participant.")
+}
+
+phenotype_heatmap_annot_age_6_11 <- data.frame(
+  `Phenotype Subtype` = phenotype_heatmap_annotations_age_6_11$snf_subtype_phenotype,
+  `Treatment Group` = phenotype_heatmap_annotations_age_6_11$unmasked,
+  row.names = phenotype_heatmap_annotations_age_6_11$id,
+  check.names = FALSE
+)
+
+phenotype_subtype_levels_age_6_11 <- phenotype_heatmap_annot_age_6_11[["Phenotype Subtype"]] |>
+  droplevels() |>
+  levels()
+phenotype_subtype_palette_age_6_11 <- stats::setNames(
+  scales::hue_pal()(length(phenotype_subtype_levels_age_6_11)),
+  phenotype_subtype_levels_age_6_11
+)
+phenotype_heatmap_display_age_6_11 <- order_heatmap_rows_by_subtype(
+  mat = phenotype_heatmap_matrix_age_6_11,
+  annotation = phenotype_heatmap_annot_age_6_11,
+  subtype_col = "Phenotype Subtype"
+)
+
+pheatmap::pheatmap(
+  phenotype_heatmap_display_age_6_11$matrix,
+  color = omics_col_pal,
+  annotation_row = phenotype_heatmap_display_age_6_11$annotation,
+  annotation_colors = list(
+    `Phenotype Subtype` = phenotype_subtype_palette_age_6_11,
+    `Treatment Group` = treatment_palette
+  ),
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  gaps_row = phenotype_heatmap_display_age_6_11$gaps_row,
+  show_rownames = TRUE,
+  show_colnames = FALSE,
+  fontsize = 10,
+  fontsize_row = 9,
+  border_color = NA,
+  main = "Phenotype Changes (Visit 3 - Visit 1), Z-scored - Age 6-11"
+)
+```
+
+### Phenotype Similarity Network
+
+The network displays the strongest 5% of participant-to-participant
+similarities from the phenotype affinity matrix. Node color identifies the
+phenotype-derived subtype, node shape identifies treatment group, and edge
+opacity represents similarity strength.
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 10
+#| fig-height: 8
+#| lightbox:
+#|   description: "Phenotype similarity network — click to enlarge"
+
+phenotype_affinity_age_6_11 <- snf_fit_phenotype_age_6_11$fused_network
+phenotype_edge_values_age_6_11 <- phenotype_affinity_age_6_11[upper.tri(phenotype_affinity_age_6_11)]
+phenotype_edge_threshold_age_6_11 <- stats::quantile(
+  phenotype_edge_values_age_6_11,
+  probs = 0.95,
+  na.rm = TRUE
+)
+
+phenotype_network_matrix_age_6_11 <- phenotype_affinity_age_6_11
+phenotype_network_matrix_age_6_11[
+  phenotype_network_matrix_age_6_11 < phenotype_edge_threshold_age_6_11
+] <- 0
+diag(phenotype_network_matrix_age_6_11) <- 0
+
+phenotype_network_age_6_11 <- igraph::graph_from_adjacency_matrix(
+  phenotype_network_matrix_age_6_11,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+snf_annotations_phenotype_lookup <- snf_annotations_phenotype_age_6_11 |>
+  dplyr::mutate(id = as.character(id))
+
+# `dplyr::slice(match(...))` silently drops rows for any unmatched vertex
+# name instead of producing an NA row, which would desync the annotations
+# from the graph's vertex count. Explicitly drop any network vertices that
+# lack a matching phenotype-subtype annotation (e.g. participants excluded
+# from phenotype-based clustering by `na.omit()` upstream) before assigning
+# vertex attributes, so the two stay aligned.
+phenotype_annotation_idx_age_6_11 <- match(
+  igraph::V(phenotype_network_age_6_11)$name,
+  snf_annotations_phenotype_lookup$id
+)
+
+phenotype_network_dropped_age_6_11 <- igraph::V(phenotype_network_age_6_11)$name[
+  is.na(phenotype_annotation_idx_age_6_11)
+]
+if (length(phenotype_network_dropped_age_6_11) > 0L) {
+  message(
+    "Dropping participant(s) without phenotype subtype annotations from the network: ",
+    paste(phenotype_network_dropped_age_6_11, collapse = ", ")
+  )
+  phenotype_network_age_6_11 <- igraph::delete_vertices(
+    phenotype_network_age_6_11,
+    which(is.na(phenotype_annotation_idx_age_6_11))
+  )
+  phenotype_annotation_idx_age_6_11 <- phenotype_annotation_idx_age_6_11[
+    !is.na(phenotype_annotation_idx_age_6_11)
+  ]
+}
+
+phenotype_network_annotations_age_6_11 <- snf_annotations_phenotype_lookup |>
+  dplyr::slice(phenotype_annotation_idx_age_6_11)
+
+phenotype_network_age_6_11 <- phenotype_network_age_6_11 |>
+  igraph::set_vertex_attr(
+    name = "phenotype_subtype",
+    value = phenotype_network_annotations_age_6_11$snf_subtype_phenotype
+  ) |>
+  igraph::set_vertex_attr(
+    name = "treatment_group",
+    value = phenotype_network_annotations_age_6_11$unmasked
+  )
+
+set.seed(4328)
+fr_layout_age_6_11 <- igraph::layout_with_fr(phenotype_network_age_6_11)
+phenotype_network_layout_age_6_11 <- ggnetwork::ggnetwork(
+  phenotype_network_age_6_11,
+  layout = fr_layout_age_6_11,
+  weights = igraph::E(phenotype_network_age_6_11)$weight
+)
+
+ggplot2::ggplot(
+  phenotype_network_layout_age_6_11,
+  ggplot2::aes(x = x, y = y, xend = xend, yend = yend)
+) +
+  ggnetwork::geom_edges(
+    ggplot2::aes(linewidth = weight),
+    colour = "grey55",
+    show.legend = FALSE
+  ) +
+  ggnetwork::geom_nodes(
+    ggplot2::aes(
+      fill = phenotype_subtype,
+      shape = treatment_group
+    ),
+    alpha = 0.9,
+    size = 7,
+    colour = "black"
+  ) +
+  ggplot2::scale_size_continuous(range = c(0.1, 3)) +
+  ggplot2::scale_fill_manual(
+    values = phenotype_subtype_palette_age_6_11,
+    name = "Phenotype Subtype"
+  ) +
+  ggplot2::scale_shape_manual(
+    values = c(21, 24),
+    name = "Treatment Group"
+  ) +
+  ggplot2::guides(
+    fill = ggplot2::guide_legend(
+      override.aes = list(shape = 21, colour = "black")
+    ),
+    shape = ggplot2::guide_legend(
+      override.aes = list(fill = "grey50")
+    )
+  ) +
+  ggnetwork::theme_blank() +
+  ggplot2::labs(title = "Phenotype similarity network - Age 6-11") +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+### Top Phenotype Feature Contributions (NMI)
+
+Each retained clinical domain is a separate SNF input block in the age 6-11
+analysis. NMI scores are calculated within those domain-specific blocks, and
+the top features are reported within each domain.
+
+```{r}
+#| label: nmi-feature-ranking-phenotype-age-6-11
+
+top_phenotype_features_age_6_11 <- rank_phenotype_snf_features(snf_fit_phenotype_age_6_11)
+
+top_phenotype_features_age_6_11 |>
+  kableExtra::kbl(
+    digits = 3,
+    caption = paste(
+      "Top phenotype features per clinical domain, ranked by NMI with",
+      "age 6-11 phenotype subtypes (top 3 for domains with >3 retained measures,",
+      "top 1 otherwise)"
+    )
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 9
+#| fig-height: 7
+#| lightbox:
+#|   description: "Top phenotype feature NMI — click to enlarge"
+
+top_phenotype_features_age_6_11 |>
+  dplyr::mutate(
+    Feature = forcats::fct_reorder(Feature, NMI)
+  ) |>
+  ggplot(aes(x = Feature, y = NMI, fill = Domain)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ Domain, scales = "free_y") +
+  labs(
+    x = NULL,
+    y = "Normalized Mutual Information (with age 6-11 phenotype subtypes)",
+    title = "Top Phenotype Feature Contributions per Domain - Age 6-11"
+  ) +
+  theme_minimal(base_size = 10)
+```
+
+## Phenotype-Based Similarity Network Fusion with Fixed Cluster Number (k = 3)
+
+This section repeats the age 6-11 multi-domain phenotype SNF analysis with the
+same label-free preprocessing and domain-network fusion steps, while fixing
+the number of clusters to **`n_clusters = 3`**.
+
+```{r}
+#| include: false
+
+# Same label-free preprocessing as Part 4 (MAD feature selection, Z-score
+# against all subjects), but with n_clusters fixed at 3 rather than
+# data-driven (Eigen-gap) selection.
+snf_fit_phenotype_age_6_11_k3 <- run_snf_subtypes(
+  omics                    = phenotype_snf_blocks_age_6_11,
+  n_clusters               = 3,
+  K                        = 10,
+  t                        = 20,
+  top_features             = 100,
+  feature_selection_method = "mad"
+)
+```
+
+Cluster number fixed at **k = 3**.
+
+Within each retained clinical domain, up to 100 features are selected by
+median absolute deviation without reference to treatment. Each domain block is
+Z-scored across all subjects before the domain-specific affinity networks are
+fused, keeping subtype discovery label-free.
+
+```{r}
+# Reuse the age 6-11 phenotype cohort defined above.
+snf_annotations_phenotype_age_6_11_k3 <- annotate_snf_subtypes(
+  subtypes = snf_fit_phenotype_age_6_11_k3$subtypes,
+  clinical_data = phenotype_clinical_ids_age_6_11,
+  id_col = "id"
+) |>
+  dplyr::mutate(
+    snf_subtype_phenotype_k3 = factor(snf_subtype)
+  )
+
+snf_annotations_phenotype_age_6_11_k3 |>
+  gtsummary::tbl_cross(
+    row = unmasked,
+    col = snf_subtype_phenotype_k3,
+    label = list(
+      unmasked ~ "Treatment Group",
+      snf_subtype_phenotype_k3 ~ "Phenotype Subtype (Age 6-11, k = 3)"
+    )
+  )
+```
+
+### Phenotype Subtype Classification from k = 2 to k = 3
+
+This Sankey diagram compares the two phenotype-clustering solutions within the
+same complete-case age 6-11 cohort. Each band follows one participant from the
+k = 2 assignment to the k = 3 assignment. It visualizes how the k = 2 groups
+split or overlap when a third subtype is requested; it does not represent
+change over time. Subtype numbers are arbitrary cluster labels.
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 10
+#| fig-height: 7
+#| lightbox:
+#|   description: "Age 6-11 phenotype subtype assignments from k=2 to k=3 - click to enlarge"
+
+if (length(n_clusters_selected_phenotype_age_6_11) != 1L ||
+    as.integer(n_clusters_selected_phenotype_age_6_11) != 2L) {
+  stop(
+    "The age 6-11 classification Sankey requires the data-selected solution to have k = 2."
+  )
+}
+
+phenotype_transition_age_6_11_k2 <- snf_annotations_phenotype_age_6_11 |>
+  dplyr::transmute(
+    id = as.character(id),
+    `k = 2` = as.character(snf_subtype_phenotype)
+  )
+phenotype_transition_age_6_11_k3 <- snf_annotations_phenotype_age_6_11_k3 |>
+  dplyr::transmute(
+    id = as.character(id),
+    `k = 3` = as.character(snf_subtype_phenotype_k3)
+  )
+
+if (anyDuplicated(phenotype_transition_age_6_11_k2$id) ||
+    anyDuplicated(phenotype_transition_age_6_11_k3$id)) {
+  stop("Each age 6-11 phenotype classification must contain one row per participant.")
+}
+if (!setequal(
+  phenotype_transition_age_6_11_k2$id,
+  phenotype_transition_age_6_11_k3$id
+)) {
+  stop(
+    "The k = 2 and k = 3 age 6-11 phenotype classifications contain different participants."
+  )
+}
+
+phenotype_subtype_sankey_data_age_6_11 <-
+  phenotype_transition_age_6_11_k2 |>
+  dplyr::inner_join(
+    phenotype_transition_age_6_11_k3,
+    by = "id"
+  ) |>
+  tidyr::pivot_longer(
+    cols = c(`k = 2`, `k = 3`),
+    names_to = "classification",
+    values_to = "subtype"
+  ) |>
+  dplyr::mutate(
+    classification = factor(classification, levels = c("k = 2", "k = 3")),
+    subtype = factor(
+      subtype,
+      levels = c("Subtype 1", "Subtype 2", "Subtype 3")
+    )
+  )
+
+draw_subtype_sankey(
+  sankey_data = phenotype_subtype_sankey_data_age_6_11,
+  base_size = 11,
+  plot_title = paste(
+    "Phenotype subtype assignments: k = 2 versus k = 3",
+    "Age 6-11",
+    sep = " - "
+  )
+)
+```
+
+### Phenotype Change Heatmap by Subgroup (k = 3)
+
+The heatmap displays the domain-specific phenotype change-score blocks used for
+SNF. Values are standardized within outcome across participants. The phenotype
+SNF cohort uses complete-case filtering (`na.omit()`), so participants with
+missing retained phenotype data are excluded rather than imputed.
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 10
+#| fig-height: 7
+#| lightbox:
+#|   description: "Phenotype change heatmap (k=3) - click to enlarge"
+
+phenotype_heatmap_matrix_age_6_11_k3 <- combine_phenotype_snf_blocks(
+  snf_fit_phenotype_age_6_11_k3$processed_omics
+)
+
+phenotype_heatmap_annotations_age_6_11_k3 <- snf_annotations_phenotype_age_6_11_k3 |>
+  dplyr::mutate(id = as.character(id)) |>
+  dplyr::slice(match(rownames(phenotype_heatmap_matrix_age_6_11_k3), id))
+
+if (anyNA(phenotype_heatmap_annotations_age_6_11_k3$id)) {
+  stop("Phenotype heatmap annotations are missing for at least one participant (k = 3).")
+}
+
+phenotype_heatmap_annot_age_6_11_k3 <- data.frame(
+  `Phenotype Subtype` = phenotype_heatmap_annotations_age_6_11_k3$snf_subtype_phenotype_k3,
+  `Treatment Group` = phenotype_heatmap_annotations_age_6_11_k3$unmasked,
+  row.names = phenotype_heatmap_annotations_age_6_11_k3$id,
+  check.names = FALSE
+)
+
+phenotype_subtype_levels_age_6_11_k3 <- phenotype_heatmap_annot_age_6_11_k3[["Phenotype Subtype"]] |>
+  droplevels() |>
+  levels()
+phenotype_subtype_palette_age_6_11_k3 <- stats::setNames(
+  scales::hue_pal()(length(phenotype_subtype_levels_age_6_11_k3)),
+  phenotype_subtype_levels_age_6_11_k3
+)
+phenotype_heatmap_display_age_6_11_k3 <- order_heatmap_rows_by_subtype(
+  mat = phenotype_heatmap_matrix_age_6_11_k3,
+  annotation = phenotype_heatmap_annot_age_6_11_k3,
+  subtype_col = "Phenotype Subtype"
+)
+
+pheatmap::pheatmap(
+  phenotype_heatmap_display_age_6_11_k3$matrix,
+  color = omics_col_pal,
+  annotation_row = phenotype_heatmap_display_age_6_11_k3$annotation,
+  annotation_colors = list(
+    `Phenotype Subtype` = phenotype_subtype_palette_age_6_11_k3,
+    `Treatment Group` = treatment_palette
+  ),
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  gaps_row = phenotype_heatmap_display_age_6_11_k3$gaps_row,
+  show_rownames = TRUE,
+  show_colnames = FALSE,
+  fontsize = 10,
+  fontsize_row = 9,
+  border_color = NA,
+  main = "Phenotype Changes (Visit 3 - Visit 1), Z-scored - Age 6-11 (k = 3)"
+)
+```
+
+### Phenotype Similarity Network (k = 3)
+
+The network displays the strongest 5% of participant-to-participant
+similarities from the phenotype affinity matrix. Node color identifies the
+phenotype-derived subtype, node shape identifies treatment group, and edge
+opacity represents similarity strength.
+
+```{r}
+#| fig-dpi: 150
+#| fig-width: 10
+#| fig-height: 8
+#| lightbox:
+#|   description: "Phenotype similarity network (k=3) — click to enlarge"
+
+phenotype_affinity_age_6_11_k3 <- snf_fit_phenotype_age_6_11_k3$fused_network
+phenotype_edge_values_age_6_11_k3 <- phenotype_affinity_age_6_11_k3[upper.tri(phenotype_affinity_age_6_11_k3)]
+phenotype_edge_threshold_age_6_11_k3 <- stats::quantile(
+  phenotype_edge_values_age_6_11_k3,
+  probs = 0.95,
+  na.rm = TRUE
+)
+
+phenotype_network_matrix_age_6_11_k3 <- phenotype_affinity_age_6_11_k3
+phenotype_network_matrix_age_6_11_k3[
+  phenotype_network_matrix_age_6_11_k3 < phenotype_edge_threshold_age_6_11_k3
+] <- 0
+diag(phenotype_network_matrix_age_6_11_k3) <- 0
+
+phenotype_network_age_6_11_k3 <- igraph::graph_from_adjacency_matrix(
+  phenotype_network_matrix_age_6_11_k3,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+snf_annotations_phenotype_k3_lookup <- snf_annotations_phenotype_age_6_11_k3 |>
+  dplyr::mutate(id = as.character(id))
+
+# Drop any network vertices without a matching phenotype-subtype annotation
+# so vertex attributes stay aligned with the graph.
+phenotype_annotation_idx_age_6_11_k3 <- match(
+  igraph::V(phenotype_network_age_6_11_k3)$name,
+  snf_annotations_phenotype_k3_lookup$id
+)
+
+phenotype_network_dropped_age_6_11_k3 <- igraph::V(phenotype_network_age_6_11_k3)$name[
+  is.na(phenotype_annotation_idx_age_6_11_k3)
+]
+if (length(phenotype_network_dropped_age_6_11_k3) > 0L) {
+  message(
+    "Dropping participant(s) without phenotype subtype annotations from the network (k = 3): ",
+    paste(phenotype_network_dropped_age_6_11_k3, collapse = ", ")
+  )
+  phenotype_network_age_6_11_k3 <- igraph::delete_vertices(
+    phenotype_network_age_6_11_k3,
+    which(is.na(phenotype_annotation_idx_age_6_11_k3))
+  )
+  phenotype_annotation_idx_age_6_11_k3 <- phenotype_annotation_idx_age_6_11_k3[
+    !is.na(phenotype_annotation_idx_age_6_11_k3)
+  ]
+}
+
+phenotype_network_annotations_age_6_11_k3 <- snf_annotations_phenotype_k3_lookup |>
+  dplyr::slice(phenotype_annotation_idx_age_6_11_k3)
+
+phenotype_network_age_6_11_k3 <- phenotype_network_age_6_11_k3 |>
+  igraph::set_vertex_attr(
+    name = "phenotype_subtype",
+    value = phenotype_network_annotations_age_6_11_k3$snf_subtype_phenotype_k3
+  ) |>
+  igraph::set_vertex_attr(
+    name = "treatment_group",
+    value = phenotype_network_annotations_age_6_11_k3$unmasked
+  )
+
+set.seed(4328)
+fr_layout_age_6_11_k3 <- igraph::layout_with_fr(phenotype_network_age_6_11_k3)
+phenotype_network_layout_age_6_11_k3 <- ggnetwork::ggnetwork(
+  phenotype_network_age_6_11_k3,
+  layout = fr_layout_age_6_11_k3,
+  weights = igraph::E(phenotype_network_age_6_11_k3)$weight
+)
+
+ggplot2::ggplot(
+  phenotype_network_layout_age_6_11_k3,
+  ggplot2::aes(x = x, y = y, xend = xend, yend = yend)
+) +
+  ggnetwork::geom_edges(
+    ggplot2::aes(linewidth = weight),
+    colour = "grey55",
+    show.legend = FALSE
+  ) +
+  ggnetwork::geom_nodes(
+    ggplot2::aes(
+      fill = phenotype_subtype,
+      shape = treatment_group
+    ),
+    alpha = 0.9,
+    size = 7,
+    colour = "black"
+  ) +
+  ggplot2::scale_size_continuous(range = c(0.1, 3)) +
+  ggplot2::scale_fill_manual(
+    values = phenotype_subtype_palette_age_6_11_k3,
+    name = "Phenotype Subtype"
+  ) +
+  ggplot2::scale_shape_manual(
+    values = c(21, 24),
+    name = "Treatment Group"
+  ) +
+  ggplot2::guides(
+    fill = ggplot2::guide_legend(
+      override.aes = list(shape = 21, colour = "black")
+    ),
+    shape = ggplot2::guide_legend(
+      override.aes = list(fill = "grey50")
+    )
+  ) +
+  ggnetwork::theme_blank() +
+  ggplot2::labs(title = "Phenotype similarity network - Age 6-11 (k = 3)") +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+### Top Phenotype Feature Contributions (NMI, k = 3)
+
+As above, each retained clinical domain is an SNF block in the age 6-11
+analysis. NMI scores are calculated within those domain-specific blocks
+against the k = 3 phenotype subtypes.
+
+```{r}
+#| label: nmi-feature-ranking-phenotype-age-6-11-k3
+
+top_phenotype_features_age_6_11_k3 <- rank_phenotype_snf_features(snf_fit_phenotype_age_6_11_k3)
+
+top_phenotype_features_age_6_11_k3 |>
+  kableExtra::kbl(
+    digits = 3,
+    caption = paste(
+      "Top phenotype features per clinical domain, ranked by NMI with",
+      "k = 3 age 6-11 phenotype subtypes (top 3 for domains with >3 retained measures,",
+      "top 1 otherwise)"
+    )
+  ) |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r}
+#| fig-dpi: 96
+#| fig-width: 9
+#| fig-height: 7
+#| lightbox:
+#|   description: "Top phenotype feature NMI (k=3) — click to enlarge"
+
+top_phenotype_features_age_6_11_k3 |>
+  dplyr::mutate(
+    Feature = forcats::fct_reorder(Feature, NMI)
+  ) |>
+  ggplot(aes(x = Feature, y = NMI, fill = Domain)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ Domain, scales = "free_y") +
+  labs(
+    x = NULL,
+    y = "Normalized Mutual Information (with age 6-11 k = 3 phenotype subtypes)",
+    title = "Top Phenotype Feature Contributions per Domain - Age 6-11 (k = 3)"
+  ) +
+  theme_minimal(base_size = 10)
+```

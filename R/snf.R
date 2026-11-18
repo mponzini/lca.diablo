@@ -61,38 +61,73 @@ calculate_visit_delta <- function(
   delta_df
 }
 
-.filter_uninformative_features <- function(block_matrix, filter_groups, top_features) {
-  if (is.null(filter_groups) || is.null(top_features)) {
+.filter_uninformative_features <- function(
+    block_matrix,
+    filter_groups = NULL,
+    top_features = NULL,
+    method = c("mad", "variance")
+) {
+  if (is.null(top_features)) {
     return(block_matrix)
   }
 
-  if (length(filter_groups) != nrow(block_matrix)) {
+  method <- match.arg(method)
+  keep_n <- min(top_features, ncol(block_matrix))
+
+  if (!is.null(filter_groups) && length(filter_groups) != nrow(block_matrix)) {
     stop("filter_groups must have one value per subject.", call. = FALSE)
   }
 
-  if (length(unique(stats::na.omit(filter_groups))) < 2L) {
-    return(block_matrix)
+  supervised <- !is.null(filter_groups) &&
+    length(unique(stats::na.omit(filter_groups))) >= 2L
+
+  if (supervised) {
+    # Label-based (supervised) selection — kept for backward compatibility.
+    # NOTE: selecting features by their association with a group label (e.g.
+    # treatment assignment) before clustering on those same features will
+    # make the resulting clusters circularly associated with that label.
+    # Prefer the unsupervised branch below (filter_groups = NULL) when the
+    # goal is label-free subtype discovery.
+    p_values <- apply(
+      block_matrix,
+      MARGIN = 2,
+      FUN = function(x) {
+        complete <- !is.na(x) & !is.na(filter_groups)
+        if (sum(complete) < 4L || length(unique(filter_groups[complete])) < 2L) {
+          return(1)
+        }
+
+        tryCatch(
+          stats::t.test(x[complete] ~ as.factor(filter_groups[complete]))$p.value,
+          error = function(e) 1
+        )
+      }
+    )
+
+    p_values[!is.finite(p_values)] <- 1
+    keep_idx <- order(p_values, decreasing = FALSE)[seq_len(keep_n)]
+  } else {
+    # Unsupervised selection — rank features by dispersion across ALL
+    # subjects, with no reference to any group label. MAD (median absolute
+    # deviation) is the default because it is robust to outliers, which are
+    # common in omics data; variance is available as an alternative.
+    dispersion <- apply(
+      block_matrix,
+      MARGIN = 2,
+      FUN = function(x) {
+        x <- x[!is.na(x)]
+        if (length(x) < 2L) {
+          return(0)
+        }
+
+        if (method == "mad") stats::mad(x) else stats::var(x)
+      }
+    )
+
+    dispersion[!is.finite(dispersion)] <- 0
+    keep_idx <- order(dispersion, decreasing = TRUE)[seq_len(keep_n)]
   }
 
-  p_values <- apply(
-    block_matrix,
-    MARGIN = 2,
-    FUN = function(x) {
-      complete <- !is.na(x) & !is.na(filter_groups)
-      if (sum(complete) < 4L || length(unique(filter_groups[complete])) < 2L) {
-        return(1)
-      }
-
-      tryCatch(
-        stats::t.test(x[complete] ~ as.factor(filter_groups[complete]))$p.value,
-        error = function(e) 1
-      )
-    }
-  )
-
-  p_values[!is.finite(p_values)] <- 1
-  keep_n <- min(top_features, ncol(block_matrix))
-  keep_idx <- order(p_values, decreasing = FALSE)[seq_len(keep_n)]
   block_matrix[, keep_idx, drop = FALSE]
 }
 
@@ -139,19 +174,36 @@ calculate_visit_delta <- function(
 #' Run Similarity Network Fusion and derive consensus subtypes
 #'
 #' @param omics Named list of omics matrices/data frames with shared subjects
-#'   in rows and features in columns.
+#'   in rows and features in columns. May contain a single block, in which
+#'   case there is nothing to fuse and clustering runs directly on that
+#'   block's own affinity matrix (`SNFtool::SNF()` requires at least two
+#'   blocks and is skipped in this case).
 #' @param n_clusters Number of consensus subtypes.
 #' @param K Number of neighbors for SNF.
-#' @param t Number of fusion iterations.
+#' @param t Number of fusion iterations. Ignored when `omics` has only one
+#'   block, since there is nothing to fuse.
 #' @param alpha Hyper-parameter for affinity matrix construction.
 #' @param control_ids Optional subject IDs used to normalize each omics block
-#'   against controls.
+#'   against controls. Leave as `NULL` (default) to normalize each block
+#'   against all subjects, which is required for label-free subtype
+#'   discovery (see `filter_groups`).
 #' @param log_transform Should each block be log-transformed before
 #'   standardization.
-#' @param filter_groups Optional group labels for uninformative feature
-#'   filtering.
-#' @param top_features Optional number of top features retained per block based
-#'   on two-group t-test p-values.
+#' @param filter_groups Optional group labels (e.g. treatment assignment) used
+#'   for supervised, two-group t-test feature filtering. Leave as `NULL`
+#'   (default) to select the top features by unsupervised dispersion
+#'   (`feature_selection_method`) instead. Supplying `filter_groups` makes the
+#'   resulting SNF subtypes circularly associated with that label, since the
+#'   features fed into clustering were chosen because they discriminate the
+#'   label — avoid this unless label-informed feature selection is explicitly
+#'   intended.
+#' @param top_features Optional number of top features retained per block.
+#'   Selection is unsupervised (by `feature_selection_method`) unless
+#'   `filter_groups` is supplied.
+#' @param feature_selection_method Dispersion measure used for unsupervised
+#'   feature selection when `filter_groups` is `NULL`. One of `"mad"`
+#'   (median absolute deviation; default, robust to outliers) or
+#'   `"variance"`. Ignored when `filter_groups` is supplied.
 #'
 #' @return A list containing processed blocks, affinity matrices, fused network,
 #'   and subtype assignments.
@@ -165,14 +217,16 @@ run_snf_subtypes <- function(
     control_ids = NULL,
     log_transform = FALSE,
     filter_groups = NULL,
-    top_features = NULL
+    top_features = NULL,
+    feature_selection_method = c("mad", "variance")
 ) {
+  feature_selection_method <- match.arg(feature_selection_method)
   if (!requireNamespace("SNFtool", quietly = TRUE)) {
     stop("Package 'SNFtool' is required. Install it with install.packages('SNFtool').", call. = FALSE)
   }
 
-  if (!is.list(omics) || length(omics) < 2L) {
-    stop("omics must be a list with at least two omics blocks.", call. = FALSE)
+  if (!is.list(omics) || length(omics) < 1L) {
+    stop("omics must be a list with at least one omics block.", call. = FALSE)
   }
 
   first_block <- as.matrix(omics[[1]])
@@ -187,6 +241,18 @@ run_snf_subtypes <- function(
     control_index <- control_index[!is.na(control_index)]
     if (length(control_index) < 2L) {
       stop("control_ids must match at least two samples.", call. = FALSE)
+    }
+  }
+
+  if (!is.null(filter_groups)) {
+    if (is.null(names(filter_groups))) {
+      stop("filter_groups must be named with sample IDs.", call. = FALSE)
+    }
+
+    filter_groups <- filter_groups[sample_ids]
+
+    if (anyNA(filter_groups)) {
+      stop("Some samples are missing from filter_groups.", call. = FALSE)
     }
   }
 
@@ -211,7 +277,8 @@ run_snf_subtypes <- function(
       block <- .filter_uninformative_features(
         block_matrix = block,
         filter_groups = filter_groups,
-        top_features = top_features
+        top_features = top_features,
+        method = feature_selection_method
       )
 
       .normalize_snf_block(
@@ -225,15 +292,24 @@ run_snf_subtypes <- function(
   affinity_matrices <- lapply(
     processed_omics,
     FUN = function(block) {
+      distance_matrix <- sqrt(SNFtool::dist2(block, block))
       SNFtool::affinityMatrix(
-        SNFtool::dist2(block, block),
+        distance_matrix,
         K = K,
         sigma = alpha
       )
     }
   )
 
-  fused_network <- SNFtool::SNF(Wall = affinity_matrices, K = K, t = t)
+  if (length(affinity_matrices) >= 2L) {
+    fused_network <- SNFtool::SNF(Wall = affinity_matrices, K = K, t = t)
+  } else {
+    # SNFtool::SNF() divides by (length(Wall) - 1) during its diffusion
+    # step, so it cannot run on a single block (would divide by zero).
+    # With only one omics block there is nothing to "fuse" anyway, so
+    # cluster directly on that block's own affinity matrix.
+    fused_network <- affinity_matrices[[1]]
+  }
   dimnames(fused_network) <- list(sample_ids, sample_ids)
 
   subtype_ids <- SNFtool::spectralClustering(fused_network, K = n_clusters)
