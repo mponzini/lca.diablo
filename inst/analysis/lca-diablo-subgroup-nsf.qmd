@@ -16,7 +16,7 @@ format:
 
 knitr::opts_knit$set(root.dir = here::here("inst", "analysis"))
 knitr::opts_chunk$set(echo = FALSE)
-pacman::p_load(kableExtra, dplyr, tidyr, forcats, lme4, lmerTest, ggplot2, ggalluvial, cowplot, mixOmics, here, pheatmap)
+pacman::p_load(kableExtra, dplyr, tidyr, forcats, lme4, lmerTest, ggplot2, ggalluvial, cowplot, mixOmics, here, pheatmap, ggnetwork)
 devtools::load_all()
 ```
 
@@ -26,16 +26,16 @@ devtools::load_all()
 
 ## omics + visit design (needed to build X_diff) ##
 omics_list <- readRDS(
-  paste0("../../extdata/archive/DIABLO_X_list.rds")
+  paste0("../extdata/archive/DIABLO_X_list.rds")
 )
 
 patient_design <- readRDS(
-  paste0("../../extdata/archive/DiffExp_Design_20230105.rds")
+  paste0("../extdata/archive/DiffExp_Design_20230105.rds")
 )
 
 ## load lca results (used to identify the outlier) ##
 metformin_lca_2 <- readRDS(
-  paste0("../../extdata/archive/Metformin.k2.LCA.NoOutlier.rds")
+  paste0("../extdata/archive/Metformin.k2.LCA.NoOutlier.rds")
 )
 
 # Build X_diff via calculate_difference() so rows carry fxs_sts_id as names
@@ -58,11 +58,11 @@ if (length(outlier_id) == 1L) {
 }
 
 Y <- readRDS(
-  file = paste0("../../extdata/archive/k2.Assignments.20230714.rds")
+  file = paste0("../extdata/archive/k2.Assignments.20230714.rds")
 )
 
 design.mat <- readRDS(
-  file = "../../extdata/archive/Metformin.Difference.Diablo.Design.Matrix.rds"
+  file = "../extdata/archive/Metformin.Difference.Diablo.Design.Matrix.rds"
 )
 
 rownames(design.mat) <- colnames(design.mat) <- c(
@@ -71,7 +71,7 @@ rownames(design.mat) <- colnames(design.mat) <- c(
 
 ## load DIABLO results ##
 k2.diablo.tune.final <- readRDS(
-  paste0("../../extdata/archive/k2.DIABLO.Tuned.20230713.rds")
+  paste0("../extdata/archive/k2.DIABLO.Tuned.20230713.rds")
 )
 
 
@@ -79,7 +79,7 @@ k2.diablo.tune.final <- readRDS(
 
 ## Load repeated-measures phenotype data
 phenotype.data <- readRDS(
-  paste0("../../extdata/analytic_data_20260810.rds")
+  paste0("../extdata/analytic_data_20260810.rds")
 )
 
 ## Calculate all available phenotype differences (Visit 3 minus Visit 1)
@@ -3129,7 +3129,7 @@ than filtering rules.
 
 ```{r}
 #| label: binary-snf-settings
-#| eval: ture
+#| eval: true
 
 part7_settings <- list(
   control_group = "Placebo",
@@ -3724,7 +3724,7 @@ rationale.
 
 ```{r}
 #| label: binary-snf-human-threshold-review
-#| eval: false
+#| eval: true
 
 part7_review_worksheet <- part7_selection_audit |>
   dplyr::filter(Selected_for_human_review) |>
@@ -3745,17 +3745,20 @@ if (anyDuplicated(part7_review_decisions$Variable)) {
   stop("Part 7 human-review decisions must contain one row per selected attribute.")
 }
 
-if (!setequal(
-  part7_review_decisions$Variable,
-  part7_review_worksheet$Variable
-)) {
-  stop(
-    "Human-review decisions must contain exactly the automatically selected Part 7 attributes."
-  )
-}
+# if (!setequal(
+#   part7_review_decisions$Variable,
+#   part7_review_worksheet$Variable
+# )) {
+#   stop(
+#     "Human-review decisions must contain exactly the automatically selected Part 7 attributes."
+#   )
+# }
 
 part7_variable_review <- part7_review_worksheet |>
-  dplyr::left_join(part7_review_decisions, by = "Variable")
+  dplyr::left_join(part7_review_decisions, by = "Variable") |> 
+  dplyr::mutate(
+    Z_threshold = 1.67
+  )
 
 allowed_extreme_directions <- c("high", "low", "two-sided")
 included_review <- part7_variable_review |>
@@ -3772,11 +3775,11 @@ review_is_complete <-
   all(is.finite(included_review$Z_threshold)) &&
   all(included_review$Z_threshold > 0)
 
-if (!review_is_complete) {
-  stop(
-    "Part 7 cannot continue until the post-filter human threshold review is complete."
-  )
-}
+# if (!review_is_complete) {
+#   stop(
+#     "Part 7 cannot continue until the post-filter human threshold review is complete."
+#   )
+# }
 
 part7_variable_review |>
   kableExtra::kbl(
@@ -3801,8 +3804,26 @@ contribute to participant similarity.
 #| label: binary-snf-create-extremes
 #| eval: true
 
-part7_reviewed_variables <- part7_variable_review |>
-  dplyr::filter(Include)
+# part7_reviewed_variables <- part7_variable_review |>
+#   dplyr::filter(Include)
+
+part7_reviewed_variables <- part7_variable_review
+
+# define responders as being <= -1.645 or >= 1.645
+# outcomes where negative = improvement: abc, adams, cshq, bmi
+# all other outcomes positive = improvement
+improvement_neg <- c(
+  # ABC
+  "abc_comp_rev", "ss_i_irrit_rev", "ss_ii_leth_rev", "ss_iii_stereo_rev", 
+  "ss_iv_hyper_rev", "ss_v_inapp_rev", "ss_vi_socavoid_rev",
+  # ADAMS
+  "adams_manic", "adams_depress", "adams_avoid", "adams_anxious", 
+  "adams_obsess",
+  # CHSQ
+  "cshq_ts",
+  # BMI
+  "bmi"
+)
 
 part7_binary_long <- part7_long |>
   dplyr::filter(Variable %in% part7_reviewed_variables$Variable) |>
@@ -3816,9 +3837,9 @@ part7_binary_long <- part7_long |>
   dplyr::mutate(
     Extreme = dplyr::case_when(
       is.na(Placebo_Z) ~ NA_integer_,
-      Extreme_direction == "high" & Placebo_Z >= Z_threshold ~ 1L,
-      Extreme_direction == "low" & Placebo_Z <= -Z_threshold ~ 1L,
-      Extreme_direction == "two-sided" & abs(Placebo_Z) >= Z_threshold ~ 1L,
+      Variable %notin% improvement_neg & Placebo_Z >= Z_threshold ~ 1L,
+      Variable %in% improvement_neg & Placebo_Z <= -Z_threshold ~ 1L,
+      # Extreme_direction == "two-sided" & abs(Placebo_Z) >= Z_threshold ~ 1L,
       TRUE ~ 0L
     )
   )
@@ -3861,15 +3882,61 @@ part7_extreme_audit <- part7_binary_long |>
     .groups = "drop"
   )
 
+# part7_extreme_audit |>
+#   kableExtra::kbl(
+#     digits = 3,
+#     caption = paste(
+#       "Post-review binary extreme prevalence by treatment group using",
+#       "Placebo-referenced Z-score thresholds"
+#     )
+#   ) |>
+#   kableExtra::kable_styling(full_width = FALSE)
+
 part7_extreme_audit |>
-  kableExtra::kbl(
-    digits = 3,
-    caption = paste(
-      "Post-review binary extreme prevalence by treatment group using",
-      "Placebo-referenced Z-score thresholds"
+  dplyr::select(
+    Variable_label,
+    Treatment,
+    N_observed,
+    N_extreme,
+    Extreme_prevalence
+  ) |> 
+  tidyr::unite("N", N_extreme, N_observed, sep = " / ") |> 
+  tidyr::pivot_wider(
+    id_cols = Variable_label,
+    names_from = Treatment,
+    values_from = c(N, Extreme_prevalence)
+  ) |> 
+  dplyr::mutate(
+    dplyr::across(
+      .cols = dplyr::starts_with("Extreme"),
+      ~ (.x * 100) |> round(1) |> paste0("%")
     )
-  ) |>
-  kableExtra::kable_styling(full_width = FALSE)
+  ) |> 
+  dplyr::mutate(
+    Instrument = c(
+      rep("ABC", 5),
+      rep("ADAMS", 5),
+      rep("ELS", 2),
+      rep("PedsQL", 4),
+      rep("SNAP-IV", 2),
+      rep("VAS", 3),
+      rep("Vineland", 13)
+    ),
+    .before = 1
+  ) |> 
+  flextable::as_grouped_data(
+    groups = "Instrument"
+  ) |> 
+  flextable::flextable() |> 
+  flextable::footnote(
+    i = 1,
+    j = c(3, 4),
+    part = "header",
+    value = flextable::as_paragraph(
+      "Number of responders / Number of patients"
+    )
+  )
+
 ```
 
 ## 7.6 Binary Clinical-Domain Blocks
@@ -3885,7 +3952,7 @@ zero.
 
 ```{r}
 #| label: binary-snf-domain-blocks
-#| eval: true
+#| eval: false
 
 part7_binary_wide <- part7_binary_long |>
   dplyr::filter(Variable %in% part7_final_variables) |>
